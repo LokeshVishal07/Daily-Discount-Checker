@@ -397,104 +397,117 @@ tab_excl, tab_flag, tab_mp, tab_all = st.tabs([
     "🔎 Full Order Explorer",
 ])
 
-DISC_FMT = {
-    "Sum_RRP":             "{:,.2f}",
-    "Sum_Paid":            "{:,.2f}",
-    "Sum_Seller_Disc":     "{:,.2f}",
-    "Total_Discount_Amt":  "{:,.2f}",
-    "Total_Discount_Pct":  "{:.1f}%",
-    "Avg_Seller_Disc_Pct": "{:.1f}%",
-    "Max_Seller_Disc_Pct": "{:.1f}%",
-}
-
 # ════════════════════════════════════════════════════════════════════════
-# TAB 1 — Exclusion Rule Dashboard
+# TAB 1 — Exclusion Rule Dashboard  (simple & clean)
 # ════════════════════════════════════════════════════════════════════════
 with tab_excl:
-    st.markdown("### Exclusion Rule Discount Dashboard")
+    st.markdown("### 📋 Exclusion Rule Dashboard")
     st.caption(
-        "Sum of RRP · Sum Paid · Total Discount Amount · Total Discount % "
-        "per exclusion rule across all marketplaces."
+        "Per exclusion remark — Orders · Sum of RRP (from ZeCom) · "
+        "Sum of Seller Discount (excludes all marketplace rebates/vouchers) · "
+        "Seller Discount %. Cancelled orders excluded."
     )
 
-    excl_df = exclusion_summary(view)
+    # Build simple summary table
+    active_view = view[
+        ~view.get("order_status", pd.Series("")).astype(str)
+        .str.lower().str.contains("cancel", na=False)
+    ].copy()
 
-    # Overall combined table
-    st.markdown("#### All Regions Combined")
-    overall = (
-        excl_df
-        .groupby(["allowed_rule", "flag_severity"])
-        .agg(
-            Orders             =("Orders",             "sum"),
-            Flagged            =("Flagged",            "sum"),
-            Sum_RRP            =("Sum_RRP",            "sum"),
-            Sum_Paid           =("Sum_Paid",           "sum"),
-            Sum_Seller_Disc    =("Sum_Seller_Disc",    "sum"),
-            Avg_Seller_Disc_Pct=("Avg_Seller_Disc_Pct","mean"),
-            Max_Seller_Disc_Pct=("Max_Seller_Disc_Pct","max"),
-        )
-        .reset_index()
-    )
-    overall["Total_Discount_Amt"] = (overall["Sum_RRP"] - overall["Sum_Paid"]).round(2)
-    overall["Total_Discount_Pct"] = (
-        (overall["Total_Discount_Amt"] / overall["Sum_RRP"]) * 100
-    ).round(2)
-    overall = overall.sort_values("Total_Discount_Pct", ascending=False).round(2)
+    def _build_excl_table(df: pd.DataFrame) -> pd.DataFrame:
+        rows = []
+        for (remark, rule, severity), grp in df.groupby(
+            ["remark", "allowed_rule", "flag_severity"], dropna=False
+        ):
+            sum_rrp      = grp["rrp_used"].sum()
+            sum_sel_disc = grp["seller_discount_amount"].sum()
+            orders       = len(grp)
+            flagged      = int(grp["flagged"].sum())
+            disc_pct     = (sum_sel_disc / sum_rrp * 100) if sum_rrp > 0 else 0
+            rows.append({
+                "Exclusion Remark":   remark if str(remark) not in ("", "nan") else "(no remark)",
+                "Rule Applied":       rule,
+                "Orders":             orders,
+                "Sum of RRP":         round(sum_rrp, 2),
+                "Sum of Seller Disc": round(sum_sel_disc, 2),
+                "Seller Disc %":      round(disc_pct, 1),
+                "Violations":         flagged,
+                "Status":             "🚨 Violated" if flagged > 0 else "✅ OK",
+                "_severity":          severity,
+            })
+        if not rows:
+            return pd.DataFrame()
+        return (pd.DataFrame(rows)
+                .sort_values(["Violations", "Seller Disc %"], ascending=[False, False])
+                .reset_index(drop=True))
 
-    st.dataframe(
-        overall.style
-        .apply(_row_bg, axis=1)
-        .format(DISC_FMT, na_rep="—"),
-        hide_index=True,
-    )
+    TABLE_FMT = {
+        "Sum of RRP":         "{:,.2f}",
+        "Sum of Seller Disc": "{:,.2f}",
+        "Seller Disc %":      "{:.1f}%",
+    }
 
-    # Per-region & per-marketplace breakdown
-    st.markdown("#### Per Region & Marketplace")
-    for region in active_regions:
-        region_excl = excl_df[excl_df["region"] == region]
-        if region_excl.empty:
-            continue
-        pic = pic_names.get(region, "")
-        st.markdown(f"**{region}**" + (f"  —  PIC: {pic}" if pic else ""))
+    def _style_excl(df: pd.DataFrame):
+        """Apply row background colour based on severity, Status cell emoji colour."""
+        def row_bg(row):
+            bg = {
+                "red":    "background-color: #ffe5e5",
+                "orange": "background-color: #fff3e0",
+                "amber":  "background-color: #fffde7",
+                "green":  "background-color: #e8f5e9",
+                "grey":   "background-color: #f5f5f5",
+            }.get(str(row.get("_severity", "")), "")
+            return [bg] * len(row)
 
-        mp_list = region_excl["marketplace"].unique().tolist()
-        mp_tabs = st.tabs(mp_list)
+        display = df.drop(columns=["_severity"], errors="ignore")
+        styled = display.style.apply(
+            lambda row: row_bg(df.loc[row.name]),
+            axis=1
+        ).format(TABLE_FMT, na_rep="—")
+        return styled, display
 
-        for mptab, mp in zip(mp_tabs, mp_list):
+    # ── Combined across all marketplaces ──────────────────────────────────────
+    st.markdown("#### All Marketplaces Combined")
+    combined_tbl = _build_excl_table(active_view)
+    if combined_tbl.empty:
+        st.info("No data available yet.")
+    else:
+        styled, display = _style_excl(combined_tbl)
+        st.dataframe(styled, hide_index=True)
+
+    # ── Per marketplace tabs ───────────────────────────────────────────────────
+    st.markdown("#### By Marketplace")
+    mp_list_all = active_view["marketplace"].unique().tolist()
+    if mp_list_all:
+        mp_tabs_all = st.tabs(mp_list_all)
+        for mptab, mp in zip(mp_tabs_all, mp_list_all):
             with mptab:
-                mp_excl = (
-                    region_excl[region_excl["marketplace"] == mp][[
-                        "allowed_rule", "flag_severity", "Orders", "Flagged",
-                        "Sum_RRP", "Sum_Paid", "Sum_Seller_Disc",
-                        "Total_Discount_Amt", "Total_Discount_Pct",
-                        "Avg_Seller_Disc_Pct", "Max_Seller_Disc_Pct",
-                    ]]
-                    .sort_values("Total_Discount_Pct", ascending=False)
-                )
+                mp_df  = active_view[active_view["marketplace"] == mp]
+                mp_tbl = _build_excl_table(mp_df)
+                if mp_tbl.empty:
+                    st.info(f"No data for {mp}.")
+                    continue
+                styled_mp, display_mp = _style_excl(mp_tbl)
+                st.dataframe(styled_mp, hide_index=True)
 
-                st.dataframe(
-                    mp_excl.style
-                    .apply(_row_bg, axis=1)
-                    .format(DISC_FMT, na_rep="—"),
-                    hide_index=True,
-                )
-
-                if len(mp_excl) > 1:
+                # Simple bar chart — Seller Disc % per remark
+                if len(mp_tbl) > 1:
                     try:
                         import plotly.express as px
+                        chart_df = mp_tbl[mp_tbl["_severity"].notna()].copy() if "_severity" in mp_tbl.columns else mp_tbl.copy()
                         fig = px.bar(
-                            mp_excl,
-                            x="Total_Discount_Pct",
-                            y="allowed_rule",
+                            mp_tbl,
+                            x="Seller Disc %",
+                            y="Exclusion Remark",
                             orientation="h",
-                            color="flag_severity",
+                            color="_severity",
                             color_discrete_map=SEVERITY_HEX,
-                            labels={"Total_Discount_Pct": "Total Disc %", "allowed_rule": "Rule"},
-                            title=f"{mp} — Total Discount % by Rule",
+                            labels={"Seller Disc %": "Seller Disc %", "Exclusion Remark": ""},
+                            title=f"{mp} — Seller Discount % by Exclusion Remark",
                             template="plotly_white",
                         )
-                        fig.update_layout(showlegend=False, height=260,
-                                          margin=dict(l=0, r=0, t=30, b=0))
+                        fig.update_layout(showlegend=False, height=max(250, len(mp_tbl) * 45),
+                                          margin=dict(l=0, r=20, t=35, b=0))
                         st.plotly_chart(fig)
                     except Exception:
                         pass
@@ -505,27 +518,25 @@ with tab_excl:
 with tab_flag:
     flagged_view = view[view["flagged"] == True]
     st.markdown(f"### 🚨 Flagged Orders ({len(flagged_view):,})")
+    st.caption("Orders where seller discount has violated the exclusion rule from ZeCom.")
 
     if flagged_view.empty:
         st.success("✅ No orders flagged today.")
     else:
         flag_cols = [c for c in [
             "region", "marketplace", "order_id", "sku", "Article Number",
-            "product_name", "rrp_used", "srp_used", "paid_price",
-            "seller_disc_pct", "customer_disc_pct", "remark",
-            "allowed_rule", "max_allowed_pct", "flag_reason", "flag_severity",
+            "product_name", "order_status", "rrp_used", "srp_used", "paid_price",
+            "seller_disc_pct", "remark", "allowed_rule", "flag_reason", "flag_severity",
         ] if c in flagged_view.columns]
 
         st.dataframe(
             flagged_view[flag_cols].style
             .map(_sev_cell, subset=["flag_severity"])
             .format({
-                "seller_disc_pct":   "{:.1f}%",
-                "customer_disc_pct": "{:.1f}%",
-                "rrp_used":          "{:.2f}",
-                "srp_used":          "{:.2f}",
-                "paid_price":        "{:.2f}",
-                "max_allowed_pct":   "{:.0f}%",
+                "seller_disc_pct": "{:.1f}%",
+                "rrp_used":        "{:.2f}",
+                "srp_used":        "{:.2f}",
+                "paid_price":      "{:.2f}",
             }, na_rep="—"),
             hide_index=True,
             height=420,
@@ -535,7 +546,7 @@ with tab_flag:
 # TAB 3 — Marketplace Summary
 # ════════════════════════════════════════════════════════════════════════
 with tab_mp:
-    st.markdown("### Marketplace Summary")
+    st.markdown("### 🏪 Marketplace Summary")
     summary = summary_by_marketplace(view)
     st.dataframe(
         summary.style.format({
@@ -548,16 +559,13 @@ with tab_mp:
         }, na_rep="—"),
         hide_index=True,
     )
-
     try:
         import plotly.express as px
         fig = px.bar(
-            summary,
-            x="marketplace", y="Avg_Seller_Disc",
+            summary, x="marketplace", y="Avg_Seller_Disc",
             color="region", barmode="group",
             title="Avg Seller Discount % by Marketplace & Region",
-            color_discrete_map=REGION_COLORS,
-            template="plotly_white",
+            color_discrete_map=REGION_COLORS, template="plotly_white",
         )
         st.plotly_chart(fig)
     except Exception:
@@ -567,7 +575,7 @@ with tab_mp:
 # TAB 4 — Full Order Explorer
 # ════════════════════════════════════════════════════════════════════════
 with tab_all:
-    st.markdown("### Full Order Explorer")
+    st.markdown("### 🔎 Full Order Explorer")
     search = st.text_input("Search EAN / Article # / Order ID / Product", "")
     disp   = view.copy()
     if search:
@@ -579,9 +587,10 @@ with tab_all:
 
     show = [c for c in [
         "region", "marketplace", "order_id", "sku", "Article Number",
-        "product_name", "order_status", "rrp_used", "srp_used", "paid_price",
-        "customer_disc_pct", "seller_disc_pct", "platform_disc_pct",
-        "remark", "allowed_rule", "flagged", "flag_severity", "flag_reason",
+        "product_name", "order_status", "rrp_used", "paid_price",
+        "seller_discount_amount", "platform_discount_amount",
+        "seller_disc_pct", "remark", "allowed_rule", "flagged",
+        "flag_severity", "flag_reason",
     ] if c in disp.columns]
     st.dataframe(disp[show], hide_index=True)
 
