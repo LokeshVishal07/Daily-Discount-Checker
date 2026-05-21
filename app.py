@@ -239,19 +239,19 @@ with st.sidebar:
                             other_mps = [m for m in REGION_MARKETPLACES.get(region, []) if m != mp]
                             for other_mp in other_mps:
                                 other_key = f"{region}_{other_mp}"
-                                # Update the selectbox session state keys so they reflect in the UI
-                                st.session_state[f"art_{other_key}"] = art_col
-                                st.session_state[f"rrp_{other_key}"] = rrp_col
-                                st.session_state[f"srp_{other_key}"] = srp_col if srp_col else "(same as RRP)"
-                                st.session_state[f"rmk_{other_key}"] = rmk_col
-                                # Also build & store lookup for each other marketplace
+                                # Store copies in a shadow key (not the widget key) to avoid conflict
+                                st.session_state[f"_copy_art_{other_key}"] = art_col
+                                st.session_state[f"_copy_rrp_{other_key}"] = rrp_col
+                                st.session_state[f"_copy_srp_{other_key}"] = srp_col if srp_col else "(same as RRP)"
+                                st.session_state[f"_copy_rmk_{other_key}"] = rmk_col
+                                # Build & store lookup for each other marketplace
                                 other_lookup, _ = build_article_lookup(
                                     zdata["df"], art_col, rrp_col, srp_col, rmk_col, None,
                                 )
                                 if other_lookup is not None:
                                     st.session_state["mp_lookups"][(region, other_mp)] = other_lookup
                             st.success(
-                                f"✅ Same columns applied to: {', '.join(other_mps)}"
+                                f"✅ Lookup applied to: {', '.join(other_mps)}. Open each expander to confirm columns."
                                 if other_mps else "✅ No other marketplaces in this region."
                             )
 
@@ -565,14 +565,14 @@ with tab_excl:
         if tbl.empty:
             st.info("No data.")
             return
-        display  = tbl[DISPLAY_COLS].copy()
-        sev_map  = dict(zip(tbl.index, tbl["_severity"]))
-        def row_bg(row):
-            return [SEV_BG.get(sev_map.get(row.name, ""), "")] * len(row)
-        st.dataframe(
-            display.style.apply(row_bg, axis=1).format(TABLE_FMT, na_rep="—"),
-            hide_index=True,
-        )
+        display = tbl[DISPLAY_COLS].copy()
+        # Format numeric columns as strings to avoid Styler (Styler is slow & breaks on some versions)
+        for col, fmt in TABLE_FMT.items():
+            if col in display.columns:
+                display[col] = display[col].apply(
+                    lambda v: fmt.format(v) if v is not None and str(v) not in ("", "nan") else "—"
+                )
+        st.dataframe(display, hide_index=True)
 
     # ── All marketplaces combined ─────────────────────────────────────────────
     st.markdown("#### All Marketplaces Combined")
@@ -628,18 +628,16 @@ with tab_flag:
             "seller_disc_pct", "remark", "allowed_rule", "flag_reason", "flag_severity",
         ] if c in flagged_view.columns]
 
-        st.dataframe(
-            flagged_view[flag_cols].style
-            .map(_sev_cell, subset=["flag_severity"])
-            .format({
-                "seller_disc_pct": "{:.1f}%",
-                "rrp_used":        "{:.2f}",
-                "srp_used":        "{:.2f}",
-                "paid_price":      "{:.2f}",
-            }, na_rep="—"),
-            hide_index=True,
-            height=420,
-        )
+        disp_flag = flagged_view[flag_cols].copy()
+        for col, fmt in [("seller_disc_pct","{:.1f}%"),("rrp_used","{:.2f}"),
+                          ("srp_used","{:.2f}"),("paid_price","{:.2f}"),
+                          ("authorised_disc_pct","{:.1f}%"),("actual_total_disc_pct","{:.1f}%"),
+                          ("overshoot_pct","{:.1f}%")]:
+            if col in disp_flag.columns:
+                disp_flag[col] = disp_flag[col].apply(
+                    lambda v: fmt.format(v) if v is not None and str(v) not in ("nan","") else "—"
+                )
+        st.dataframe(disp_flag, hide_index=True, height=420)
 
 # ════════════════════════════════════════════════════════════════════════
 # TAB 3 — Marketplace Summary
