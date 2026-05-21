@@ -24,6 +24,13 @@ from discount_engine import (
 )
 from exporter import build_report
 
+
+# ── Helper — defined here so it's available everywhere in this file ───────────
+def _idx(lst, val):
+    try: return lst.index(val) if val and val in lst else 0
+    except ValueError: return 0
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 st.set_page_config(page_title="Daily Discount Checker", page_icon="🔍",
                    layout="wide", initial_sidebar_state="expanded")
@@ -484,8 +491,3 @@ with d2:
 st.divider()
 st.caption("Daily Discount Checker · Seller discount excludes all MP-funded rebates & vouchers · "
            "EXCLUDE = sell at SRP · MAX X% = capped · OPEN = no restriction")
-
-
-def _idx(lst, val):
-    try: return lst.index(val) if val and val in lst else 0
-    except ValueError: return 0
