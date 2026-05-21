@@ -46,7 +46,7 @@ def _normalise(raw, marketplace, region, cfg):
     out["sku"]           = _col(df, cfg, "sku",           "").astype(str).str.strip()
     out["product_name"]  = _col(df, cfg, "product_name",  "")
     out["order_status"]  = _col(df, cfg, "order_status",  "")
-    out["order_date"]    = pd.to_datetime(_col(df, cfg, "order_date", pd.NaT), errors="coerce", dayfirst=True)
+    out["order_date"]    = pd.to_datetime(_col(df, cfg, "order_date", pd.NaT), errors="coerce")
     out["original_price"]= pd.to_numeric(_col(df, cfg, "original_price"), errors="coerce")
     out["paid_price"]    = pd.to_numeric(_col(df, cfg, "paid_price"),      errors="coerce")
     out["quantity"]      = pd.to_numeric(_col(df, cfg, "quantity", 1),     errors="coerce").fillna(1)
