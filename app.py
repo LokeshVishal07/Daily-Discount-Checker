@@ -398,23 +398,30 @@ tab_excl, tab_flag, tab_mp, tab_all = st.tabs([
 ])
 
 # ════════════════════════════════════════════════════════════════════════
-# TAB 1 — Exclusion Rule Dashboard  (simple & clean)
+# TAB 1 — Exclusion Rule Dashboard
 # ════════════════════════════════════════════════════════════════════════
 with tab_excl:
     st.markdown("### 📋 Exclusion Rule Dashboard")
     st.caption(
-        "Per exclusion remark — Orders · Sum of RRP (from ZeCom) · "
-        "Sum of Seller Discount (excludes all marketplace rebates/vouchers) · "
-        "Seller Discount %. Cancelled orders excluded."
+        "Per exclusion remark — Orders · Sum of RRP (ZeCom) · "
+        "Sum of Seller Discount (seller-funded only, no MP rebates/vouchers) · "
+        "Seller Disc % = Sum Seller Disc / Sum RRP × 100.  "
+        "Cancelled orders excluded."
     )
 
-    # Build simple summary table
+    # Exclude cancelled orders
     active_view = view[
         ~view.get("order_status", pd.Series("")).astype(str)
         .str.lower().str.contains("cancel", na=False)
     ].copy()
 
-    def _build_excl_table(df: pd.DataFrame) -> pd.DataFrame:
+    def _build_excl_table(df):
+        """
+        Exactly: Exclusion Remark | Orders | Sum of RRP | Sum of Seller Disc | Seller Disc % | Flag
+        RRP = rrp_used (always from ZeCom).
+        Seller Disc = seller_discount_amount only (no platform discounts).
+        Seller Disc % = Sum Seller Disc / Sum RRP x 100.
+        """
         rows = []
         for (remark, rule, severity), grp in df.groupby(
             ["remark", "allowed_rule", "flag_severity"], dropna=False
@@ -423,61 +430,56 @@ with tab_excl:
             sum_sel_disc = grp["seller_discount_amount"].sum()
             orders       = len(grp)
             flagged      = int(grp["flagged"].sum())
-            disc_pct     = (sum_sel_disc / sum_rrp * 100) if sum_rrp > 0 else 0
+            disc_pct     = round((sum_sel_disc / sum_rrp * 100), 1) if sum_rrp > 0 else 0.0
             rows.append({
                 "Exclusion Remark":   remark if str(remark) not in ("", "nan") else "(no remark)",
-                "Rule Applied":       rule,
                 "Orders":             orders,
                 "Sum of RRP":         round(sum_rrp, 2),
                 "Sum of Seller Disc": round(sum_sel_disc, 2),
-                "Seller Disc %":      round(disc_pct, 1),
-                "Violations":         flagged,
-                "Status":             "🚨 Violated" if flagged > 0 else "✅ OK",
-                "_severity":          severity,
+                "Seller Disc %":      disc_pct,
+                "Flag":               "🚨 Violated" if flagged > 0 else "✅ OK",
+                "_severity":          str(severity),
+                "_flagged":           flagged,
             })
         if not rows:
             return pd.DataFrame()
-        return (pd.DataFrame(rows)
-                .sort_values(["Violations", "Seller Disc %"], ascending=[False, False])
-                .reset_index(drop=True))
+        return (
+            pd.DataFrame(rows)
+            .sort_values(["_flagged", "Seller Disc %"], ascending=[False, False])
+            .reset_index(drop=True)
+        )
 
-    TABLE_FMT = {
-        "Sum of RRP":         "{:,.2f}",
-        "Sum of Seller Disc": "{:,.2f}",
-        "Seller Disc %":      "{:.1f}%",
+    DISPLAY_COLS = ["Exclusion Remark", "Orders", "Sum of RRP", "Sum of Seller Disc", "Seller Disc %", "Flag"]
+    TABLE_FMT   = {"Sum of RRP": "{:,.2f}", "Sum of Seller Disc": "{:,.2f}", "Seller Disc %": "{:.1f}%"}
+    SEV_BG      = {
+        "red":    "background-color: #ffe5e5",
+        "orange": "background-color: #fff3e0",
+        "amber":  "background-color: #fffde7",
+        "green":  "background-color: #e8f5e9",
+        "grey":   "background-color: #f5f5f5",
     }
 
-    def _style_excl(df: pd.DataFrame):
-        """Apply row background colour based on severity, Status cell emoji colour."""
+    def _show_excl_table(tbl):
+        display = tbl[DISPLAY_COLS].copy()
+        sev_map = dict(zip(tbl.index, tbl["_severity"]))
         def row_bg(row):
-            bg = {
-                "red":    "background-color: #ffe5e5",
-                "orange": "background-color: #fff3e0",
-                "amber":  "background-color: #fffde7",
-                "green":  "background-color: #e8f5e9",
-                "grey":   "background-color: #f5f5f5",
-            }.get(str(row.get("_severity", "")), "")
-            return [bg] * len(row)
+            return [SEV_BG.get(sev_map.get(row.name, ""), "")] * len(row)
+        st.dataframe(
+            display.style.apply(row_bg, axis=1).format(TABLE_FMT, na_rep="—"),
+            hide_index=True,
+        )
 
-        display = df.drop(columns=["_severity"], errors="ignore")
-        styled = display.style.apply(
-            lambda row: row_bg(df.loc[row.name]),
-            axis=1
-        ).format(TABLE_FMT, na_rep="—")
-        return styled, display
-
-    # ── Combined across all marketplaces ──────────────────────────────────────
+    # ── All marketplaces combined ─────────────────────────────────────────────
     st.markdown("#### All Marketplaces Combined")
     combined_tbl = _build_excl_table(active_view)
     if combined_tbl.empty:
-        st.info("No data available yet.")
+        st.info("Upload order files and run the check to see results here.")
     else:
-        styled, display = _style_excl(combined_tbl)
-        st.dataframe(styled, hide_index=True)
+        _show_excl_table(combined_tbl)
 
-    # ── Per marketplace tabs ───────────────────────────────────────────────────
+    # ── Per-marketplace tabs ───────────────────────────────────────────────────
     st.markdown("#### By Marketplace")
-    mp_list_all = active_view["marketplace"].unique().tolist()
+    mp_list_all = sorted(active_view["marketplace"].unique().tolist())
     if mp_list_all:
         mp_tabs_all = st.tabs(mp_list_all)
         for mptab, mp in zip(mp_tabs_all, mp_list_all):
@@ -485,29 +487,28 @@ with tab_excl:
                 mp_df  = active_view[active_view["marketplace"] == mp]
                 mp_tbl = _build_excl_table(mp_df)
                 if mp_tbl.empty:
-                    st.info(f"No data for {mp}.")
+                    st.info(f"No active orders for {mp}.")
                     continue
-                styled_mp, display_mp = _style_excl(mp_tbl)
-                st.dataframe(styled_mp, hide_index=True)
-
-                # Simple bar chart — Seller Disc % per remark
+                _show_excl_table(mp_tbl)
+                # Bar chart
                 if len(mp_tbl) > 1:
                     try:
                         import plotly.express as px
-                        chart_df = mp_tbl[mp_tbl["_severity"].notna()].copy() if "_severity" in mp_tbl.columns else mp_tbl.copy()
                         fig = px.bar(
                             mp_tbl,
-                            x="Seller Disc %",
-                            y="Exclusion Remark",
+                            x="Seller Disc %", y="Exclusion Remark",
                             orientation="h",
                             color="_severity",
                             color_discrete_map=SEVERITY_HEX,
                             labels={"Seller Disc %": "Seller Disc %", "Exclusion Remark": ""},
-                            title=f"{mp} — Seller Discount % by Exclusion Remark",
+                            title=f"{mp} — Seller Disc % by Exclusion Remark",
                             template="plotly_white",
                         )
-                        fig.update_layout(showlegend=False, height=max(250, len(mp_tbl) * 45),
-                                          margin=dict(l=0, r=20, t=35, b=0))
+                        fig.update_layout(
+                            showlegend=False,
+                            height=max(260, len(mp_tbl) * 48),
+                            margin=dict(l=0, r=20, t=35, b=0),
+                        )
                         st.plotly_chart(fig)
                     except Exception:
                         pass
