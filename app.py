@@ -218,7 +218,14 @@ with st.sidebar:
                         help="Column with EXCLUDED / MAX 30% / 10% VC ONLY remarks",
                     )
 
-                    # Build per-marketplace lookup
+                    # ── Apply to all marketplaces in this region ──────────────
+                    apply_all = st.checkbox(
+                        f"Apply these columns to all {region} marketplaces",
+                        key=f"apply_all_{mp_key}",
+                        help="Tick this to copy the RRP, SRP and Remarks columns you selected above to every other marketplace in this region.",
+                    )
+
+                    # Build lookup for this marketplace
                     lookup, lerr = build_article_lookup(
                         zdata["df"], art_col, rrp_col, srp_col, rmk_col, None,
                     )
@@ -226,6 +233,28 @@ with st.sidebar:
                         st.error(f"Lookup error: {lerr}")
                     else:
                         st.session_state["mp_lookups"][(region, mp)] = lookup
+
+                        # If checkbox ticked — copy same columns to all other marketplaces in this region
+                        if apply_all:
+                            other_mps = [m for m in REGION_MARKETPLACES.get(region, []) if m != mp]
+                            for other_mp in other_mps:
+                                other_key = f"{region}_{other_mp}"
+                                # Update the selectbox session state keys so they reflect in the UI
+                                st.session_state[f"art_{other_key}"] = art_col
+                                st.session_state[f"rrp_{other_key}"] = rrp_col
+                                st.session_state[f"srp_{other_key}"] = srp_col if srp_col else "(same as RRP)"
+                                st.session_state[f"rmk_{other_key}"] = rmk_col
+                                # Also build & store lookup for each other marketplace
+                                other_lookup, _ = build_article_lookup(
+                                    zdata["df"], art_col, rrp_col, srp_col, rmk_col, None,
+                                )
+                                if other_lookup is not None:
+                                    st.session_state["mp_lookups"][(region, other_mp)] = other_lookup
+                            st.success(
+                                f"✅ Same columns applied to: {', '.join(other_mps)}"
+                                if other_mps else "✅ No other marketplaces in this region."
+                            )
+
                         n_art = len(lookup)
                         n_rrp = lookup["RRP"].notna().sum()
                         n_rmk = (lookup["remark"] != "").sum()
