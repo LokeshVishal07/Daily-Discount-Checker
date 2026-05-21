@@ -19,7 +19,8 @@ from zecom_loader import (
 from content_loader  import load_content_file
 from order_loader    import load_order_file
 from discount_engine import (
-    run_pipeline, summary_by_marketplace, exclusion_summary, flagged_orders,
+    run_pipeline, apply_flags_with_open_pct,
+    summary_by_marketplace, exclusion_summary, flagged_orders,
 )
 from exporter import build_report
 
@@ -158,77 +159,109 @@ with st.sidebar:
                 }
                 st.success(f"✅ ZeCom {region} — {len(df_tab):,} rows")
 
-    # ── Per-region column mapping ─────────────────────────────────────────────
+    # ── Per-marketplace column mapping ──────────────────────────────────────────
     if st.session_state["zecom_data"]:
         st.divider()
         st.markdown("### 🗂️ Column Mapping")
-        st.caption("Auto-suggested. Change freely — no hardcoded columns.")
+        st.caption(
+            "Select RRP, SRP and Remarks columns per marketplace. "
+            "Collapsed by default — expand to change."
+        )
+
+        if "mp_lookups" not in st.session_state:
+            st.session_state["mp_lookups"] = {}
 
         for region in active_regions:
             zdata = st.session_state["zecom_data"].get(region)
             if not zdata:
                 continue
             nc, tc, ac = zdata["num_cols"], zdata["txt_cols"], zdata["all_cols"]
+            marketplaces = REGION_MARKETPLACES.get(region, [])
 
-            with st.expander(f"**{region}** column mapping", expanded=True):
+            st.markdown(f"**{region}**")
 
-                art_col = st.selectbox(
-                    f"{region} — Article / Style# column",
-                    options=ac,
-                    index=_idx(ac, guess_article_col(ac)),
-                    key=f"art_{region}",
-                    help="Column with article/style numbers (e.g. Style#, PIM Article#)",
-                )
-                rrp_col = st.selectbox(
-                    f"{region} — RRP column",
-                    options=nc,
-                    index=_idx(nc, guess_rrp_col(nc, region)),
-                    key=f"rrp_{region}",
-                    help="Retail Recommended Price column",
-                )
-                srp_options = ["(same as RRP)"] + nc
-                srp_col = st.selectbox(
-                    f"{region} — SRP / MD Price column",
-                    options=srp_options,
-                    index=_idx(srp_options, guess_srp_col(nc, region)),
-                    key=f"srp_{region}",
-                    help="SRP or markdown price — ceiling for EXCLUDED products",
-                )
-                srp_col = None if srp_col == "(same as RRP)" else srp_col
+            for mp in marketplaces:
+                mp_key = f"{region}_{mp}"
+                with st.expander(f"{mp}", expanded=False):
 
-                rmk_col = st.selectbox(
-                    f"{region} — MP Remarks / Exclusion column",
-                    options=tc,
-                    index=_idx(tc, guess_remarks_col(tc)),
-                    key=f"rmk_{region}",
-                    help="Column with EXCLUDED FROM PROMOTION / MAX 30% / OPEN FOR ALL etc.",
-                )
-                vc_options = ["(none)"] + tc
-                vc_col = st.selectbox(
-                    f"{region} — Platform VC column (optional)",
-                    options=vc_options,
-                    index=_idx(vc_options, guess_platform_vc_col(tc)),
-                    key=f"vc_{region}",
-                )
-                vc_col = None if vc_col == "(none)" else vc_col
-
-                lookup, lerr = build_article_lookup(
-                    zdata["df"], art_col, rrp_col, srp_col, rmk_col, vc_col,
-                )
-                if lerr:
-                    st.error(f"Lookup error: {lerr}")
-                else:
-                    zdata["lookup"] = lookup
-                    st.caption(
-                        f"→ {len(lookup):,} articles · "
-                        f"{lookup['RRP'].notna().sum():,} with RRP · "
-                        f"{(lookup['remark'] != '').sum():,} with remarks"
+                    art_col = st.selectbox(
+                        "Article / Style# column",
+                        options=ac,
+                        index=_idx(ac, guess_article_col(ac)),
+                        key=f"art_{mp_key}",
+                        help="Column holding the article or style number",
                     )
-                    with st.expander("📋 Remark values in this ZeCom"):
-                        rc = lookup["remark"].value_counts().reset_index()
-                        rc.columns = ["Remark", "Count"]
-                        st.dataframe(rc, hide_index=True)
 
+                    rrp_col = st.selectbox(
+                        "RRP column",
+                        options=nc,
+                        index=_idx(nc, guess_rrp_col(nc, region)),
+                        key=f"rrp_{mp_key}",
+                        help="Retail Recommended Price — base for all discount calculations",
+                    )
+
+                    srp_options = ["(same as RRP)"] + nc
+                    srp_col = st.selectbox(
+                        "SRP / MD Price column",
+                        options=srp_options,
+                        index=_idx(srp_options, guess_srp_col(nc, region)),
+                        key=f"srp_{mp_key}",
+                        help="SRP or markdown price. Used as base for VC% and EXCLUDE ceiling.",
+                    )
+                    srp_col = None if srp_col == "(same as RRP)" else srp_col
+
+                    rmk_col = st.selectbox(
+                        "Exclusion / Remarks column",
+                        options=tc,
+                        index=_idx(tc, guess_remarks_col(tc)),
+                        key=f"rmk_{mp_key}",
+                        help="Column with EXCLUDED / MAX 30% / 10% VC ONLY remarks",
+                    )
+
+                    # Build per-marketplace lookup
+                    lookup, lerr = build_article_lookup(
+                        zdata["df"], art_col, rrp_col, srp_col, rmk_col, None,
+                    )
+                    if lerr:
+                        st.error(f"Lookup error: {lerr}")
+                    else:
+                        st.session_state["mp_lookups"][(region, mp)] = lookup
+                        n_art = len(lookup)
+                        n_rrp = lookup["RRP"].notna().sum()
+                        n_rmk = (lookup["remark"] != "").sum()
+                        st.caption(
+                            f"{n_art:,} articles · {n_rrp:,} with RRP · "
+                            f"{n_rmk:,} with remarks  |  "
+                            f"RRP: **{rrp_col.split('[')[1].rstrip(']') if '[' in rrp_col else rrp_col}** · "
+                            f"Remarks: **{rmk_col.split('[')[1].rstrip(']') if '[' in rmk_col else rmk_col}**"
+                        )
+                        with st.expander("📋 Unique remarks in this file"):
+                            rc = lookup["remark"].value_counts().reset_index()
+                            rc.columns = ["Remark", "Count"]
+                            rc = rc[rc["Remark"] != ""]
+                            st.dataframe(rc, hide_index=True)
+
+    # ── OPEN remark — Max Voucher % per marketplace ───────────────────────────
+    st.divider()
+    st.markdown("### 🎟️ OPEN Remark — Max Allowed Voucher %")
+    st.caption(
+        "For OPEN remarks, enter the maximum seller voucher % allowed per marketplace. "
+        "Tolerance: up to 5% overshoot = OK · 5–10% = check (amber) · >10% = flagged red."
+    )
+    open_pct_map = {}
+    for region in active_regions:
+        mps = REGION_MARKETPLACES.get(region, [])
+        if mps:
+            st.markdown(f"**{region}**")
+            cols = st.columns(len(mps))
+            for col_w, mp in zip(cols, mps):
+                with col_w:
+                    open_pct_map[(region, mp)] = st.number_input(
+                        mp,
+                        min_value=0.0, max_value=100.0,
+                        value=50.0, step=5.0,
+                        key=f"open_pct_{region}_{mp}",
+                    )
 
 # ─────────────────────────────────────────────────────────────────────────────
 # MAIN AREA
@@ -243,13 +276,13 @@ st.caption(f"Regions: {region_labels}  ·  {date.today().strftime('%d %b %Y')}")
 # ── Status row ────────────────────────────────────────────────────────────────
 s1, s2, s3 = st.columns(3)
 content_ok = st.session_state["content_df"] is not None
-loaded     = [r for r in active_regions
-              if "lookup" in st.session_state["zecom_data"].get(r, {})]
+mp_lookups_now = st.session_state.get("mp_lookups", {})
+loaded_mps = [f"{r}/{m}" for (r, m) in mp_lookups_now.keys() if r in active_regions]
 with s1:
     n = len(st.session_state["content_df"]) if content_ok else 0
     st.metric("Content File", f"✅ {n:,} EANs" if content_ok else "❌ Not uploaded")
 with s2:
-    st.metric("ZeCom Loaded", f"✅ {', '.join(loaded)}" if loaded else "❌ None")
+    st.metric("ZeCom Mapped", f"✅ {len(loaded_mps)} marketplace(s)" if loaded_mps else "❌ None")
 with s3:
     st.metric("Orders Loaded", f"{len(st.session_state['orders_df']):,} rows")
 
@@ -298,26 +331,45 @@ if collected:
 # ─────────────────────────────────────────────────────────────────────────────
 orders_df  = st.session_state["orders_df"]
 content_df = st.session_state["content_df"]
-zecom_data = st.session_state["zecom_data"]
-lookups    = {r: d["lookup"] for r, d in zecom_data.items() if "lookup" in d}
+mp_lookups = st.session_state.get("mp_lookups", {})
 
-can_run = not orders_df.empty and content_df is not None and len(lookups) > 0
+can_run = not orders_df.empty and content_df is not None and len(mp_lookups) > 0
 if not can_run:
     missing = []
     if orders_df.empty:    missing.append("order files")
     if content_df is None: missing.append("Content file")
-    if not lookups:        missing.append("ZeCom + column mapping")
+    if not mp_lookups:     missing.append("ZeCom + per-marketplace column mapping")
     st.info(f"⬆️  Still waiting for: **{', '.join(missing)}**")
     st.stop()
 
 st.divider()
 if st.button("▶️  Run Discount Check", type="primary"):
     with st.spinner("Mapping EANs → Articles → RRP/SRP → Applying rules…"):
-        combined_lookup = (
-            pd.concat(list(lookups.values()), ignore_index=True)
-            .drop_duplicates("Article Number")
-        )
-        result = run_pipeline(orders_df, content_df, combined_lookup)
+        # Build one lookup per (region, marketplace), then run pipeline per group
+        # and recombine — so each marketplace uses its own RRP/Remarks columns
+        frames = []
+        for (region, mp), grp_orders in orders_df.groupby(["region","marketplace"]):
+            lookup = mp_lookups.get((region, mp))
+            if lookup is None:
+                # Fallback: try any lookup for this region
+                fallback = next(
+                    (v for (r, m), v in mp_lookups.items() if r == region), None
+                )
+                lookup = fallback
+            if lookup is None or grp_orders.empty:
+                # No lookup available — still process without RRP mapping
+                grp_orders = grp_orders.copy()
+                grp_orders["Article Number"] = None
+                grp_orders["RRP"] = None
+                grp_orders["SRP"] = None
+                grp_orders["remark"] = ""
+                frames.append(grp_orders)
+                continue
+            grp_result = run_pipeline(grp_orders, content_df, lookup)
+            frames.append(grp_result)
+
+        result = pd.concat(frames, ignore_index=True) if frames else pd.DataFrame()
+        result = apply_flags_with_open_pct(result, open_pct_map)
         st.session_state["result_df"] = result
     st.success(f"✅ {len(result):,} orders processed.")
 
@@ -405,53 +457,33 @@ with tab_excl:
     st.caption(
         "Per exclusion remark — Orders · Sum of RRP (ZeCom) · "
         "Sum of Seller Discount (seller-funded only, no MP rebates/vouchers) · "
-        "Seller Disc % = Sum Seller Disc / Sum RRP × 100.  "
-        "Cancelled orders excluded."
+        "Seller Disc % = Sum Seller Disc / Sum RRP × 100. Cancelled orders excluded."
     )
 
-    # Exclude cancelled orders
+    # ── Exclude cancelled orders ──────────────────────────────────────────────
     active_view = view[
         ~view.get("order_status", pd.Series("")).astype(str)
         .str.lower().str.contains("cancel", na=False)
     ].copy()
 
-    def _build_excl_table(df):
-        """
-        Exactly: Exclusion Remark | Orders | Sum of RRP | Sum of Seller Disc | Seller Disc % | Flag
-        RRP = rrp_used (always from ZeCom).
-        Seller Disc = seller_discount_amount only (no platform discounts).
-        Seller Disc % = Sum Seller Disc / Sum RRP x 100.
-        """
-        rows = []
-        for (remark, rule, severity), grp in df.groupby(
-            ["remark", "allowed_rule", "flag_severity"], dropna=False
-        ):
-            sum_rrp      = grp["rrp_used"].sum()
-            sum_sel_disc = grp["seller_discount_amount"].sum()
-            orders       = len(grp)
-            flagged      = int(grp["flagged"].sum())
-            disc_pct     = round((sum_sel_disc / sum_rrp * 100), 1) if sum_rrp > 0 else 0.0
-            rows.append({
-                "Exclusion Remark":   remark if str(remark) not in ("", "nan") else "(no remark)",
-                "Orders":             orders,
-                "Sum of RRP":         round(sum_rrp, 2),
-                "Sum of Seller Disc": round(sum_sel_disc, 2),
-                "Seller Disc %":      disc_pct,
-                "Flag":               "🚨 Violated" if flagged > 0 else "✅ OK",
-                "_severity":          str(severity),
-                "_flagged":           flagged,
-            })
-        if not rows:
-            return pd.DataFrame()
-        return (
-            pd.DataFrame(rows)
-            .sort_values(["_flagged", "Seller Disc %"], ascending=[False, False])
-            .reset_index(drop=True)
-        )
+    st.divider()
 
-    DISPLAY_COLS = ["Exclusion Remark", "Orders", "Sum of RRP", "Sum of Seller Disc", "Seller Disc %", "Flag"]
-    TABLE_FMT   = {"Sum of RRP": "{:,.2f}", "Sum of Seller Disc": "{:,.2f}", "Seller Disc %": "{:.1f}%"}
-    SEV_BG      = {
+    # ── Build table ───────────────────────────────────────────────────────────
+    DISPLAY_COLS = [
+        "Exclusion Remark", "Rule", "Orders",
+        "Sum of RRP", "Sum of Seller Disc", "Seller Disc %",
+        "Authorised Disc %", "Avg Actual Disc %", "Avg Overshoot %",
+        "Violations", "Status",
+    ]
+    TABLE_FMT = {
+        "Sum of RRP":          "{:,.2f}",
+        "Sum of Seller Disc":  "{:,.2f}",
+        "Seller Disc %":       "{:.1f}%",
+        "Authorised Disc %":   "{:.1f}%",
+        "Avg Actual Disc %":   "{:.1f}%",
+        "Avg Overshoot %":     "{:.1f}%",
+    }
+    SEV_BG = {
         "red":    "background-color: #ffe5e5",
         "orange": "background-color: #fff3e0",
         "amber":  "background-color: #fffde7",
@@ -459,9 +491,53 @@ with tab_excl:
         "grey":   "background-color: #f5f5f5",
     }
 
+    def _build_excl_table(df):
+        rows = []
+        grp_cols = [c for c in ["remark","rule_label","flag_severity"] if c in df.columns]
+        if not grp_cols:
+            return pd.DataFrame()
+        for keys, grp in df.groupby(grp_cols, dropna=False, observed=True):
+            if not isinstance(keys, tuple): keys = (keys,)
+            remark     = str(keys[0]) if len(keys)>0 else ""
+            rule_label = str(keys[1]) if len(keys)>1 else ""
+            severity   = str(keys[2]) if len(keys)>2 else "grey"
+            sum_rrp      = grp["rrp_used"].sum()
+            sum_sel_disc = grp["seller_discount_amount"].sum()
+            orders       = len(grp)
+            flagged      = int(grp["flagged"].sum())
+            amber_count  = int((grp["flag_severity"]=="amber").sum()) if "flag_severity" in grp.columns else 0
+            seller_pct   = round(sum_sel_disc/sum_rrp*100,1) if sum_rrp>0 else 0.0
+            def _r(col):
+                v = grp[col].mean() if col in grp.columns else None
+                return round(float(v),1) if v is not None and not pd.isna(v) else None
+            status = "🚨 Violated" if flagged>0 else ("⚠️ Check" if amber_count>0 else "✅ OK")
+            rows.append({
+                "Exclusion Remark":  remark if remark not in ("","nan") else "(no remark)",
+                "Rule":              rule_label,
+                "Orders":            orders,
+                "Sum of RRP":        round(sum_rrp,2),
+                "Sum of Seller Disc":round(sum_sel_disc,2),
+                "Seller Disc %":     seller_pct,
+                "Authorised Disc %": _r("authorised_disc_pct"),
+                "Avg Actual Disc %": _r("actual_total_disc_pct"),
+                "Avg Overshoot %":   _r("overshoot_pct"),
+                "Violations":        flagged,
+                "Status":            status,
+                "_severity":         severity,
+                "_flagged":          flagged,
+            })
+        if not rows:
+            return pd.DataFrame()
+        out = pd.DataFrame(rows)
+        sc = "Avg Overshoot %" if "Avg Overshoot %" in out.columns else "Seller Disc %"
+        return out.sort_values(["_flagged",sc],ascending=[False,False]).reset_index(drop=True)
+
     def _show_excl_table(tbl):
-        display = tbl[DISPLAY_COLS].copy()
-        sev_map = dict(zip(tbl.index, tbl["_severity"]))
+        if tbl.empty:
+            st.info("No data.")
+            return
+        display  = tbl[DISPLAY_COLS].copy()
+        sev_map  = dict(zip(tbl.index, tbl["_severity"]))
         def row_bg(row):
             return [SEV_BG.get(sev_map.get(row.name, ""), "")] * len(row)
         st.dataframe(
@@ -472,36 +548,29 @@ with tab_excl:
     # ── All marketplaces combined ─────────────────────────────────────────────
     st.markdown("#### All Marketplaces Combined")
     combined_tbl = _build_excl_table(active_view)
-    if combined_tbl.empty:
-        st.info("Upload order files and run the check to see results here.")
-    else:
-        _show_excl_table(combined_tbl)
+    _show_excl_table(combined_tbl)
 
     # ── Per-marketplace tabs ───────────────────────────────────────────────────
     st.markdown("#### By Marketplace")
-    mp_list_all = sorted(active_view["marketplace"].unique().tolist())
+    mp_list_all = sorted(active_view["marketplace"].unique().tolist()) if not active_view.empty else []
     if mp_list_all:
         mp_tabs_all = st.tabs(mp_list_all)
         for mptab, mp in zip(mp_tabs_all, mp_list_all):
             with mptab:
                 mp_df  = active_view[active_view["marketplace"] == mp]
                 mp_tbl = _build_excl_table(mp_df)
-                if mp_tbl.empty:
-                    st.info(f"No active orders for {mp}.")
-                    continue
                 _show_excl_table(mp_tbl)
-                # Bar chart
-                if len(mp_tbl) > 1:
+                if not mp_tbl.empty and len(mp_tbl) > 1:
                     try:
                         import plotly.express as px
                         fig = px.bar(
                             mp_tbl,
-                            x="Seller Disc %", y="Exclusion Remark",
+                            x="Avg Overshoot %", y="Exclusion Remark",
                             orientation="h",
                             color="_severity",
                             color_discrete_map=SEVERITY_HEX,
-                            labels={"Seller Disc %": "Seller Disc %", "Exclusion Remark": ""},
-                            title=f"{mp} — Seller Disc % by Exclusion Remark",
+                            labels={"Avg Overshoot %": "Avg Overshoot %", "Exclusion Remark": ""},
+                            title=f"{mp} — Avg Overshoot % by Exclusion Remark",
                             template="plotly_white",
                         )
                         fig.update_layout(
