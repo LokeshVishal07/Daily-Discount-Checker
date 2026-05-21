@@ -436,37 +436,6 @@ if view.empty:
 # ─────────────────────────────────────────────────────────────────────────────
 # KPIs
 # ─────────────────────────────────────────────────────────────────────────────
-st.markdown('<div class="sec">📈 Key Metrics</div>', unsafe_allow_html=True)
-total          = len(view)
-flagged_count  = int(view["flagged"].sum())
-flag_pct       = flagged_count / total * 100 if total else 0
-rrp_match      = view["RRP"].notna().mean() * 100 if "RRP" in view.columns else 0
-sum_rrp        = view["rrp_used"].sum()
-sum_paid       = view["paid_price"].sum()
-total_disc_pct = (sum_rrp - sum_paid) / sum_rrp * 100 if sum_rrp else 0
-
-k1, k2, k3, k4, k5, k6 = st.columns(6)
-
-def _kpi(col, lbl, val, fmt="{:.1f}%", cls=""):
-    with col:
-        st.markdown(
-            f'<div class="kpi {cls}">'
-            f'<div class="kpi-v">{fmt.format(val)}</div>'
-            f'<div class="kpi-l">{lbl}</div>'
-            f'</div>',
-            unsafe_allow_html=True,
-        )
-
-_kpi(k1, "Total Orders",   total,           "{:,}")
-_kpi(k2, "Sum RRP",        sum_rrp,          "{:,.0f}")
-_kpi(k3, "Sum Paid",       sum_paid,         "{:,.0f}")
-_kpi(k4, "Overall Disc %", total_disc_pct,   "{:.1f}%")
-_kpi(k5, "🚨 Flagged",     flagged_count,
-     "{:,}" + f" ({flag_pct:.0f}%)",
-     cls="red-kpi" if flagged_count > 0 else "green-kpi")
-_kpi(k6, "RRP Match Rate", rrp_match,        "{:.1f}%")
-
-st.markdown("")
 
 # ─────────────────────────────────────────────────────────────────────────────
 # DASHBOARD TABS
