@@ -66,7 +66,7 @@ def build_report(result_df: pd.DataFrame) -> bytes:
     buf = io.BytesIO()
 
     # ── Sheet 1: Exclusion Summary ─────────────────────────────────────────────
-    excl = _build_excl_summary(result_df)
+    excl, excl_sev = _build_excl_summary(result_df)
 
     # ── Sheet 2: Full Detail ───────────────────────────────────────────────────
     detail_cols = [c for c in DETAIL_COLS if c in result_df.columns]
@@ -83,7 +83,7 @@ def build_report(result_df: pd.DataFrame) -> bytes:
 
     with pd.ExcelWriter(buf, engine="openpyxl") as writer:
         excl.to_excel(writer, sheet_name="Exclusion Summary", index=False)
-        _style_ws(writer.sheets["Exclusion Summary"], len(excl), pd.Series(dtype=str))
+        _style_ws(writer.sheets["Exclusion Summary"], len(excl), excl_sev)
 
         detail.to_excel(writer, sheet_name="Full Detail", index=False)
         _style_ws(writer.sheets["Full Detail"], len(detail), sev_series)
@@ -162,12 +162,10 @@ def _build_excl_summary(df: pd.DataFrame) -> pd.DataFrame:
            .reset_index(drop=True))
 
     # Extract severity for row colouring BEFORE dropping
-    sev_series_out = out["_sev"].copy()
+    sev_series_out = out["_sev"].copy().reset_index(drop=True)
     out.drop(columns=["_sev"], inplace=True)   # ← hidden from Excel output
-
-    # Attach severity as a separate attribute so _style_ws can use it
-    out._sev_series = sev_series_out
-    return out
+    # Return as tuple (df, severity_series) — caller unpacks
+    return out, sev_series_out
 
 
 def _style_ws(ws, nrows: int, severities: pd.Series, header_fill=None):
