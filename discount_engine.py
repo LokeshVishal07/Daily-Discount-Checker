@@ -27,6 +27,12 @@ def run_pipeline(orders: pd.DataFrame, content: pd.DataFrame,
 
 # ── Merge ─────────────────────────────────────────────────────────────────────
 def _merge(orders, content, zecom):
+    """
+    Two-path merge to handle both EAN-based and Article-Number-based seller SKUs:
+    Path 1: order.sku matches content.EAN  → get Article Number → get ZeCom data
+    Path 2: order.sku matches zecom.Article Number directly (PH/some sellers use Article# as SKU)
+    Result keeps Path 1 where available, falls back to Path 2 for unmatched rows.
+    """
     orders  = orders.copy()
     orders["_sku"] = (orders["sku"].astype(str).str.strip()
                       .str.replace(r"\.0$", "", regex=True))
@@ -35,9 +41,25 @@ def _merge(orders, content, zecom):
     content["Article Number"] = content["Article Number"].astype(str).str.strip()
     zecom   = zecom.copy()
     zecom["Article Number"]   = zecom["Article Number"].astype(str).str.strip()
+
+    # ── Path 1: SKU is EAN ────────────────────────────────────────────────────
     merged = (orders
               .merge(content, left_on="_sku", right_on="EAN", how="left")
               .merge(zecom,   on="Article Number", how="left"))
+
+    # ── Path 2: for rows where Article Number is still null (EAN match failed),
+    #    try treating SKU directly as Article Number ───────────────────────────
+    no_match_mask = merged["Article Number"].isna() | (merged["Article Number"] == "nan")
+    if no_match_mask.any():
+        # Try direct SKU → Article Number match
+        direct = (orders[no_match_mask][["_sku"] + [c for c in orders.columns if c != "_sku"]]
+                  .merge(zecom, left_on="_sku", right_on="Article Number", how="left"))
+        # Fill in the missing Article Number and ZeCom columns
+        zecom_cols = [c for c in zecom.columns if c in merged.columns]
+        for col in zecom_cols + ["Article Number"]:
+            if col in direct.columns:
+                merged.loc[no_match_mask, col] = direct[col].values
+
     merged.drop(columns=["_sku"], inplace=True)
     return merged.reset_index(drop=True)
 
