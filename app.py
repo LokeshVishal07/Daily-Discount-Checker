@@ -593,15 +593,22 @@ with tab_flag:
     else:
         flag_cols = [c for c in [
             "region", "marketplace", "order_id", "sku", "Article Number",
-            "product_name", "order_status", "rrp_used", "srp_used", "paid_price",
-            "seller_disc_pct", "remark", "allowed_rule", "flag_reason", "flag_severity",
+            "product_name", "order_status", "rrp_used", "srp_used",
+            "seller_srp_disc_pct", "seller_vc_disc_pct", "seller_end_disc_pct",
+            "paid_price", "actual_total_disc_pct",
+            "remark", "rule_label", "flag_reason", "flag_severity",
         ] if c in flagged_view.columns]
 
-        disp_flag = flagged_view[flag_cols].copy()
-        for col, fmt in [("seller_disc_pct","{:.1f}%"),("rrp_used","{:.2f}"),
-                          ("srp_used","{:.2f}"),("paid_price","{:.2f}"),
-                          ("authorised_disc_pct","{:.1f}%"),("actual_total_disc_pct","{:.1f}%"),
-                          ("overshoot_pct","{:.1f}%")]:
+        disp_flag = flagged_view[flag_cols].rename(columns={
+            "seller_srp_disc_pct":  "Seller SRP Disc %",
+            "seller_vc_disc_pct":   "Seller VC Disc % (Remark)",
+            "seller_end_disc_pct":  "Seller END Disc %",
+            "actual_total_disc_pct":"Cust Disc % from RRP",
+            "rule_label":           "Rule",
+        }).copy()
+        for col, fmt in [("Seller SRP Disc %","{:.1f}%"),("Seller VC Disc % (Remark)","{:.1f}%"),
+                          ("Seller END Disc %","{:.1f}%"),("Cust Disc % from RRP","{:.1f}%"),
+                          ("rrp_used","{:.2f}"),("srp_used","{:.2f}"),("paid_price","{:.2f}")]:
             if col in disp_flag.columns:
                 disp_flag[col] = disp_flag[col].apply(
                     lambda v: fmt.format(v) if v is not None and str(v) not in ("nan","") else "—"
@@ -653,12 +660,20 @@ with tab_all:
 
     show = [c for c in [
         "region", "marketplace", "order_id", "sku", "Article Number",
-        "product_name", "order_status", "rrp_used", "paid_price",
-        "seller_discount_amount", "platform_discount_amount",
-        "seller_disc_pct", "remark", "allowed_rule", "flagged",
-        "flag_severity", "flag_reason",
+        "product_name", "order_status", "rrp_used", "srp_used",
+        "seller_srp_disc_pct", "seller_vc_disc_pct", "seller_end_disc_pct",
+        "paid_price", "actual_total_disc_pct",
+        "remark", "rule_label", "flagged", "flag_severity", "flag_reason",
     ] if c in disp.columns]
-    st.dataframe(disp[show], hide_index=True)
+    # Rename to match format file labels
+    label_map = {
+        "seller_srp_disc_pct":  "Seller SRP Disc %",
+        "seller_vc_disc_pct":   "Seller VC Disc % (Remark)",
+        "seller_end_disc_pct":  "Seller END Disc %",
+        "actual_total_disc_pct":"Cust Disc % from RRP",
+        "rule_label":           "Rule",
+    }
+    st.dataframe(disp[show].rename(columns=label_map), hide_index=True)
 
 # ─────────────────────────────────────────────────────────────────────────────
 # DOWNLOAD
