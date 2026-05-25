@@ -49,8 +49,14 @@ def _cached_zecom_sheet(file_hash: str, region: str, file_bytes: bytes):
     return load_zecom_sheet(file_bytes, region)
 
 
+# Version token — bump this whenever settings.py column mappings change
+_CACHE_VERSION = "v3"   # bumped: added Shopee_PH config
+
 @st.cache_data(show_spinner=False)
-def _cached_order_file(file_hash: str, marketplace: str, region: str, file_bytes: bytes):
+def _cached_order_file(file_hash: str, marketplace: str, region: str,
+                        file_bytes: bytes, _ver: str = _CACHE_VERSION):
+    """Cache keyed by file hash + marketplace + region + version.
+    Changing _CACHE_VERSION forces all cached order results to rebuild."""
     return load_order_file(file_bytes, marketplace, region)
 
 
@@ -226,22 +232,15 @@ with st.sidebar:
                         key=f"rmk_{mp_key}",
                     )
 
-                    apply_all = st.checkbox(
-                        f"Apply to all {region} marketplaces",
-                        key=f"apply_all_{mp_key}",
-                    )
-
                     # Build lookup — store result in session_state keyed by
                     # file hash + column selections to avoid rebuilding on every render
-                    zf_hash   = st.session_state["zecom_hash"].get(region, "")
+                    zf_hash    = st.session_state["zecom_hash"].get(region, "")
                     lookup_key = f"{zf_hash}|{art_col}|{rrp_col}|{srp_col}|{rmk_col}"
 
                     if st.session_state.get(f"_lookup_key_{region}_{mp}") == lookup_key:
-                        # Same file + same columns → reuse stored lookup
                         lookup = st.session_state["mp_lookups"].get((region, mp))
                         lerr   = "" if lookup is not None else "No cached lookup"
                     else:
-                        # Columns changed or first run — rebuild lookup directly (no JSON)
                         try:
                             lookup, lerr = _build_lookup_direct(
                                 zdata["df"], art_col, rrp_col, srp_col, rmk_col
@@ -262,12 +261,28 @@ with st.sidebar:
                             f"{n_rmk:,} with remarks"
                         )
 
+                        # ── Apply to all marketplaces in this region ───────────────
+                        apply_all = st.checkbox(
+                            f"Apply these columns to all {region} marketplaces",
+                            key=f"apply_all_{mp_key}",
+                            help="Copies the RRP, SRP and Remarks column selections above to every other marketplace in this region.",
+                        )
                         if apply_all:
                             other_mps = [m for m in marketplaces if m != mp]
                             for om in other_mps:
+                                om_key = f"{region}_{om}"
+                                # Write directly to the widget session_state keys
+                                # so the dropdowns update visually on next render
+                                st.session_state[f"art_{om_key}"] = art_col
+                                st.session_state[f"rrp_{om_key}"] = rrp_col
+                                st.session_state[f"srp_{om_key}"] = srp_col if srp_col else "(same as RRP)"
+                                st.session_state[f"rmk_{om_key}"] = rmk_col
+                                # Also store the same lookup so no rebuild needed
                                 st.session_state["mp_lookups"][(region, om)] = lookup
+                                st.session_state[f"_lookup_key_{region}_{om}"] = lookup_key
                             if other_mps:
-                                st.success(f"✅ Applied to {', '.join(other_mps)}")
+                                st.success(f"✅ Same columns applied to: {', '.join(other_mps)}")
+                                st.caption("The other marketplace expanders now show the copied columns.")
 
     # ── OPEN remark max % ─────────────────────────────────────────────────────
     st.divider()
@@ -298,6 +313,17 @@ region_labels = " · ".join(
     for r in active_regions
 )
 st.caption(f"Regions: {region_labels}  ·  {date.today().strftime('%d %b %Y')}")
+
+# ── Clear cache button (use if data looks wrong after uploading new files) ───
+with st.sidebar:
+    st.divider()
+    if st.button("🔄 Clear all cached data", help="Use this if paid prices or remarks look wrong after re-uploading files."):
+        st.cache_data.clear()
+        for k in list(st.session_state.keys()):
+            if k.startswith("_lookup_key_") or k.startswith("_content_hash"):
+                del st.session_state[k]
+        st.success("Cache cleared — please re-upload your files.")
+        st.rerun()
 
 s1, s2, s3 = st.columns(3)
 content_ok = st.session_state["content_df"] is not None
@@ -341,7 +367,7 @@ for tab, region in zip(region_tabs, active_regions):
                     for uf in ups:
                         uf_bytes = uf.read()
                         uf_hash  = _file_hash(uf_bytes)
-                        df_ord, err = _cached_order_file(uf_hash, mp, region, uf_bytes)
+                        df_ord, err = _cached_order_file(uf_hash, mp, region, uf_bytes, _CACHE_VERSION)
                         if err:
                             st.error(f"❌ {uf.name}: {err}")
                         else:
@@ -458,8 +484,8 @@ def _build_excl_table(df):
         remark   = str(keys[0]) if len(keys)>0 else ""
         rule     = str(keys[1]) if len(keys)>1 else ""
         severity = str(keys[2]) if len(keys)>2 else "grey"
-        sum_rrp  = grp["rrp_used"].sum()
-        sum_paid = grp["paid_price"].sum()
+        sum_rrp  = grp["rrp_used"].sum(min_count=1) or 0
+        sum_paid = grp["paid_price"].sum(min_count=1) or 0
         orders   = len(grp)
         flagged  = int(grp["flagged"].sum())
         amber_n  = int((grp["flag_severity"]=="amber").sum()) if "flag_severity" in grp.columns else 0
