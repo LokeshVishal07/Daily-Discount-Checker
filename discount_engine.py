@@ -123,6 +123,29 @@ def _calc_discounts(df: pd.DataFrame) -> pd.DataFrame:
     ).round(2)
     df["overshoot_pct"] = (df["actual_total_disc_pct"] - df["authorised_disc_pct"]).round(2)
 
+    # ── Three new seller discount breakdown columns ────────────────────────────
+    # Col 10: Seller SRP Discount % = (RRP - SRP) / RRP * 100
+    # Where SRP == RRP (no markdown), this is 0%
+    srp_for_calc = srp_used.where(srp_used.notna() & (srp_used > 0), safe_rrp)
+    df["seller_srp_disc_pct"] = ((safe_rrp - srp_for_calc) / safe_rrp * 100).where(
+        safe_rrp.notna() & (srp_for_calc < safe_rrp)   # only show when SRP < RRP
+    ).fillna(0).round(2)
+
+    # Col 11: Seller Voucher Discount % from Exclusion Remark
+    # = vc_pct stated in remark (e.g. 10% VC ONLY → 10.0)
+    # Calculated ON SRP: actual discount amount = SRP × vc_pct/100
+    # Express as % of RRP for consistency: (SRP × vc_pct/100) / RRP × 100
+    vc_series = pd.to_numeric(df["vc_pct"], errors="coerce").fillna(0)
+    vc_amount = srp_for_calc * vc_series / 100            # VC discount amount
+    df["seller_vc_disc_pct"] = (vc_amount / safe_rrp * 100).where(
+        safe_rrp.notna() & (vc_series > 0)
+    ).fillna(0).round(2)
+
+    # Col 12: Seller END Discount % = SRP disc % + VC disc % = total authorised seller disc
+    # = (RRP - authorised_floor) / RRP * 100  (same as authorised_disc_pct)
+    # Using the two components explicitly for transparency
+    df["seller_end_disc_pct"] = (df["seller_srp_disc_pct"] + df["seller_vc_disc_pct"]).round(2)
+
     return df
 
 
@@ -239,12 +262,39 @@ def summary_by_marketplace(df: pd.DataFrame) -> pd.DataFrame:
 def flagged_orders(df: pd.DataFrame) -> pd.DataFrame:
     keep = [c for c in [
         "region","marketplace","order_id","sku","Article Number","product_name",
-        "order_status","rrp_used","srp_used","authorised_floor",
-        "authorised_disc_pct","paid_price","actual_total_disc_pct",
-        "overshoot_pct","seller_discount_amount","seller_disc_pct",
-        "remark","rule_label","rule_type","flag_reason","flag_severity",
+        "order_status","rrp_used","srp_used",
+        "seller_srp_disc_pct","seller_vc_disc_pct","seller_end_disc_pct",
+        "paid_price","actual_total_disc_pct",
+        "remark","rule_label","rule_type","flagged","flag_reason","flag_severity",
     ] if c in df.columns]
     return df[df["flagged"] == True][keep].reset_index(drop=True)
+
+
+def _format_col_name(col: str) -> str:
+    """Map internal column names to the exact display names from the format file."""
+    mapping = {
+        "region":               "Region",
+        "marketplace":          "Marketplace",
+        "order_id":             "Order Id",
+        "sku":                  "Sku",
+        "Article Number":       "Article Number",
+        "product_name":         "Product Name",
+        "order_status":         "Order Status",
+        "rrp_used":             "Rrp Used",
+        "srp_used":             "Srp Used",
+        "seller_srp_disc_pct":  "Seller SRP Discount %",
+        "seller_vc_disc_pct":   "SELLER Voucher Discount % Mentioned in Exclusion Remark",
+        "seller_end_disc_pct":  "SELLER END DISCOUNT %",
+        "paid_price":           "Customer PAID Price",
+        "actual_total_disc_pct":"Calculate Discount % from Customer PAID PRICE From RRP",
+        "remark":               "Remark",
+        "rule_label":           "Rule Label",
+        "rule_type":            "Rule Type",
+        "flagged":              "Flagged",
+        "flag_reason":          "Flag Reason",
+        "flag_severity":        "Flag Severity",
+    }
+    return mapping.get(col, col.replace("_"," ").title())
 
 
 def exclusion_summary(df: pd.DataFrame) -> pd.DataFrame:
