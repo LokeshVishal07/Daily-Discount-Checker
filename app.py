@@ -189,11 +189,15 @@ with st.sidebar:
                 else:
                     st.success(f"✅ ZeCom {region} (cached)")
 
-    # ── Per-marketplace column mapping ────────────────────────────────────────
+    # ── Per-marketplace column mapping ──────────────────────────────────────────
     if st.session_state["zecom_data"]:
         st.divider()
         st.markdown("### 🗂️ Column Mapping")
         st.caption("Collapsed by default. Changes auto-rebuild the lookup.")
+
+        # Apply-all staging: written BEFORE widgets render so selectboxes pick up new values
+        # Key: f"_staged_{region}_{mp}_{field}" → value to use as selectbox default
+        # This avoids the StreamlitAPIException from modifying widget state after instantiation
 
         for region in active_regions:
             zdata = st.session_state["zecom_data"].get(region)
@@ -206,34 +210,47 @@ with st.sidebar:
 
             for mp in marketplaces:
                 mp_key = f"{region}_{mp}"
+
+                # Read staged values (set by apply_all on previous render) as defaults
+                def _get(field, guess):
+                    staged = st.session_state.get(f"_staged_{mp_key}_{field}")
+                    if staged and staged in (ac if field=="art" else nc if field in ("rrp","srp") else tc):
+                        return staged
+                    return guess
+
                 with st.expander(f"{mp}", expanded=False):
 
+                    art_default = _get("art", guess_article_col(ac))
                     art_col = st.selectbox(
                         "Article / Style# column", options=ac,
-                        index=_idx(ac, guess_article_col(ac)),
+                        index=_idx(ac, art_default),
                         key=f"art_{mp_key}",
                     )
+
+                    rrp_default = _get("rrp", guess_rrp_col(nc, region))
                     rrp_col = st.selectbox(
                         "RRP column", options=nc,
-                        index=_idx(nc, guess_rrp_col(nc, region)),
+                        index=_idx(nc, rrp_default),
                         key=f"rrp_{mp_key}",
                     )
+
                     srp_options = ["(same as RRP)"] + nc
+                    srp_default = _get("srp", guess_srp_col(nc, region))
                     srp_col = st.selectbox(
                         "SRP / MD Price column", options=srp_options,
-                        index=_idx(srp_options, guess_srp_col(nc, region)),
+                        index=_idx(srp_options, srp_default),
                         key=f"srp_{mp_key}",
                     )
                     srp_col_val = None if srp_col == "(same as RRP)" else srp_col
 
+                    rmk_default = _get("rmk", guess_remarks_col(tc))
                     rmk_col = st.selectbox(
                         "Exclusion / Remarks column", options=tc,
-                        index=_idx(tc, guess_remarks_col(tc)),
+                        index=_idx(tc, rmk_default),
                         key=f"rmk_{mp_key}",
                     )
 
-                    # Build lookup — store result in session_state keyed by
-                    # file hash + column selections to avoid rebuilding on every render
+                    # Build lookup
                     zf_hash    = st.session_state["zecom_hash"].get(region, "")
                     lookup_key = f"{zf_hash}|{art_col}|{rrp_col}|{srp_col}|{rmk_col}"
 
@@ -243,7 +260,7 @@ with st.sidebar:
                     else:
                         try:
                             lookup, lerr = _build_lookup_direct(
-                                zdata["df"], art_col, rrp_col, srp_col, rmk_col
+                                zdata["df"], art_col, rrp_col, srp_col_val, rmk_col
                             )
                             if lookup is not None:
                                 st.session_state[f"_lookup_key_{region}_{mp}"] = lookup_key
@@ -261,28 +278,27 @@ with st.sidebar:
                             f"{n_rmk:,} with remarks"
                         )
 
-                        # ── Apply to all marketplaces in this region ───────────────
+                        # Apply to all — write to STAGING keys (not widget keys)
+                        # Staging is read at the TOP of each expander on the NEXT render
                         apply_all = st.checkbox(
                             f"Apply these columns to all {region} marketplaces",
                             key=f"apply_all_{mp_key}",
-                            help="Copies the RRP, SRP and Remarks column selections above to every other marketplace in this region.",
+                            help="Copies RRP, SRP and Remarks column selections to every other marketplace in this region.",
                         )
                         if apply_all:
                             other_mps = [m for m in marketplaces if m != mp]
                             for om in other_mps:
                                 om_key = f"{region}_{om}"
-                                # Write directly to the widget session_state keys
-                                # so the dropdowns update visually on next render
-                                st.session_state[f"art_{om_key}"] = art_col
-                                st.session_state[f"rrp_{om_key}"] = rrp_col
-                                st.session_state[f"srp_{om_key}"] = srp_col if srp_col else "(same as RRP)"
-                                st.session_state[f"rmk_{om_key}"] = rmk_col
-                                # Also store the same lookup so no rebuild needed
+                                # Write to STAGING keys — safe to set any time
+                                st.session_state[f"_staged_{om_key}_art"] = art_col
+                                st.session_state[f"_staged_{om_key}_rrp"] = rrp_col
+                                st.session_state[f"_staged_{om_key}_srp"] = srp_col
+                                st.session_state[f"_staged_{om_key}_rmk"] = rmk_col
+                                # Also copy the lookup directly
                                 st.session_state["mp_lookups"][(region, om)] = lookup
                                 st.session_state[f"_lookup_key_{region}_{om}"] = lookup_key
                             if other_mps:
-                                st.success(f"✅ Same columns applied to: {', '.join(other_mps)}")
-                                st.caption("The other marketplace expanders now show the copied columns.")
+                                st.success(f"✅ Will apply to {', '.join(other_mps)} — open each expander to confirm, then click Run.")
 
     # ── OPEN remark max % ─────────────────────────────────────────────────────
     st.divider()
