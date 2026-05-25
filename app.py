@@ -5,7 +5,7 @@ Nothing re-runs on a filter click or tab switch.
 """
 from __future__ import annotations
 from datetime import date
-import hashlib, io
+import hashlib
 import pandas as pd
 import streamlit as st
 
@@ -54,13 +54,14 @@ def _cached_order_file(file_hash: str, marketplace: str, region: str, file_bytes
     return load_order_file(file_bytes, marketplace, region)
 
 
-@st.cache_data(show_spinner=False)
-def _cached_build_lookup(zecom_hash: str, art_col: str, rrp_col: str,
-                          srp_col: str, rmk_col: str, df_json: str):
-    df = pd.read_json(io.StringIO(df_json), orient="split")
-    return build_article_lookup(df, art_col, rrp_col,
-                                 None if srp_col == "(same as RRP)" else srp_col,
-                                 rmk_col, None)
+def _build_lookup_direct(df: pd.DataFrame, art_col: str, rrp_col: str,
+                          srp_col: str, rmk_col: str):
+    """Build lookup directly from df — no JSON round-trip, no Streamlit cache issues."""
+    return build_article_lookup(
+        df, art_col, rrp_col,
+        None if srp_col == "(same as RRP)" else srp_col,
+        rmk_col, None
+    )
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -230,18 +231,25 @@ with st.sidebar:
                         key=f"apply_all_{mp_key}",
                     )
 
-                    # Build lookup — cached by file hash + column selection
-                    zf_bytes = st.session_state["zecom_bytes"].get(region, b"")
-                    zf_hash  = st.session_state["zecom_hash"].get(region, "")
-                    cache_key = f"{zf_hash}|{art_col}|{rrp_col}|{srp_col}|{rmk_col}"
+                    # Build lookup — store result in session_state keyed by
+                    # file hash + column selections to avoid rebuilding on every render
+                    zf_hash   = st.session_state["zecom_hash"].get(region, "")
+                    lookup_key = f"{zf_hash}|{art_col}|{rrp_col}|{srp_col}|{rmk_col}"
 
-                    try:
-                        df_json  = zdata["df"].to_json(orient="split")
-                        lookup, lerr = _cached_build_lookup(
-                            cache_key, art_col, rrp_col, srp_col, rmk_col, df_json
-                        )
-                    except Exception as e:
-                        lookup, lerr = None, str(e)
+                    if st.session_state.get(f"_lookup_key_{region}_{mp}") == lookup_key:
+                        # Same file + same columns → reuse stored lookup
+                        lookup = st.session_state["mp_lookups"].get((region, mp))
+                        lerr   = "" if lookup is not None else "No cached lookup"
+                    else:
+                        # Columns changed or first run — rebuild lookup directly (no JSON)
+                        try:
+                            lookup, lerr = _build_lookup_direct(
+                                zdata["df"], art_col, rrp_col, srp_col, rmk_col
+                            )
+                            if lookup is not None:
+                                st.session_state[f"_lookup_key_{region}_{mp}"] = lookup_key
+                        except Exception as e:
+                            lookup, lerr = None, str(e)
 
                     if lerr:
                         st.error(f"Lookup error: {lerr}")
