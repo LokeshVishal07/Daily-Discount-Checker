@@ -28,10 +28,8 @@ def run_pipeline(orders: pd.DataFrame, content: pd.DataFrame,
 # ── Merge ─────────────────────────────────────────────────────────────────────
 def _merge(orders, content, zecom):
     """
-    Two-path merge to handle both EAN-based and Article-Number-based seller SKUs:
-    Path 1: order.sku matches content.EAN  → get Article Number → get ZeCom data
-    Path 2: order.sku matches zecom.Article Number directly (PH/some sellers use Article# as SKU)
-    Result keeps Path 1 where available, falls back to Path 2 for unmatched rows.
+    Merge path: order.sku (EAN) → content.EAN → Article Number → zecom lookup.
+    SKU in order files must be the EAN barcode to match Content file.
     """
     orders  = orders.copy()
     orders["_sku"] = (orders["sku"].astype(str).str.strip()
@@ -41,25 +39,9 @@ def _merge(orders, content, zecom):
     content["Article Number"] = content["Article Number"].astype(str).str.strip()
     zecom   = zecom.copy()
     zecom["Article Number"]   = zecom["Article Number"].astype(str).str.strip()
-
-    # ── Path 1: SKU is EAN ────────────────────────────────────────────────────
     merged = (orders
               .merge(content, left_on="_sku", right_on="EAN", how="left")
               .merge(zecom,   on="Article Number", how="left"))
-
-    # ── Path 2: for rows where Article Number is still null (EAN match failed),
-    #    try treating SKU directly as Article Number ───────────────────────────
-    no_match_mask = merged["Article Number"].isna() | (merged["Article Number"] == "nan")
-    if no_match_mask.any():
-        # Try direct SKU → Article Number match
-        direct = (orders[no_match_mask][["_sku"] + [c for c in orders.columns if c != "_sku"]]
-                  .merge(zecom, left_on="_sku", right_on="Article Number", how="left"))
-        # Fill in the missing Article Number and ZeCom columns
-        zecom_cols = [c for c in zecom.columns if c in merged.columns]
-        for col in zecom_cols + ["Article Number"]:
-            if col in direct.columns:
-                merged.loc[no_match_mask, col] = direct[col].values
-
     merged.drop(columns=["_sku"], inplace=True)
     return merged.reset_index(drop=True)
 
@@ -176,11 +158,48 @@ def apply_flags_with_open_pct(df: pd.DataFrame,
                                open_pct_map: dict | None = None) -> pd.DataFrame:
     """
     Fully vectorised flag logic. open_pct_map = {(region, mp): float}.
+    Also fills seller_vc_disc_pct and seller_end_disc_pct for OPEN rows
+    using the sidebar-entered voucher % (since OPEN remarks have no % in text).
     """
     if open_pct_map is None:
         open_pct_map = {}
 
     df = df.copy()
+
+    # ── Fill OPEN rows with sidebar VC % ─────────────────────────────────────
+    # For OPEN rule_type rows: seller_vc_disc_pct = open_pct (expressed as % of RRP)
+    # seller_end_disc_pct = seller_srp_disc_pct + seller_vc_disc_pct
+    if "rule_type" in df.columns and open_pct_map:
+        m_open = df["rule_type"] == "open"
+        if m_open.any():
+            # Map each OPEN row to its open_pct via (region, marketplace)
+            def _open_pct_for_row(row):
+                return open_pct_map.get((row.get("region",""), row.get("marketplace","")), 0.0)
+
+            open_pct_series = df[m_open].apply(_open_pct_for_row, axis=1)
+
+            # VC discount % for OPEN = open_pct applied to SRP (or RRP if no SRP)
+            # expressed as % of RRP for consistency with other rules
+            srp_for_open = df.loc[m_open, "srp_used"].fillna(df.loc[m_open, "rrp_used"])
+            safe_rrp_open = df.loc[m_open, "rrp_used"].replace(0, np.nan)
+            vc_amount_open = srp_for_open * open_pct_series.values / 100
+            vc_pct_of_rrp  = (vc_amount_open / safe_rrp_open * 100).round(2)
+
+            df.loc[m_open, "seller_vc_disc_pct"]  = vc_pct_of_rrp.values
+            df.loc[m_open, "vc_pct"]               = open_pct_series.values
+            df.loc[m_open, "seller_end_disc_pct"]  = (
+                df.loc[m_open, "seller_srp_disc_pct"].fillna(0) + vc_pct_of_rrp
+            ).round(2).values
+
+            # Also update authorised_floor and authorised_disc_pct for OPEN rows
+            auth_floor_open  = srp_for_open * (1 - open_pct_series.values / 100)
+            auth_disc_open   = ((safe_rrp_open - auth_floor_open) / safe_rrp_open * 100).round(2)
+            df.loc[m_open, "authorised_floor"]    = auth_floor_open.values
+            df.loc[m_open, "authorised_disc_pct"] = auth_disc_open.values
+            df.loc[m_open, "overshoot_pct"]       = (
+                df.loc[m_open, "actual_total_disc_pct"] - auth_disc_open
+            ).round(2).values
+
     rt        = df["rule_type"]
     overshoot = df["overshoot_pct"]
     paid      = df["paid_price"]
