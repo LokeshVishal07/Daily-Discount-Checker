@@ -49,15 +49,8 @@ def _cached_zecom_sheet(file_hash: str, region: str, file_bytes: bytes):
     return load_zecom_sheet(file_bytes, region)
 
 
-# Version token — bump this whenever settings.py column mappings change
-_CACHE_VERSION = "v3"   # bumped: added Shopee_PH config
-
-@st.cache_data(show_spinner=False)
-def _cached_order_file(file_hash: str, marketplace: str, region: str,
-                        file_bytes: bytes, _ver: str = _CACHE_VERSION):
-    """Cache keyed by file hash + marketplace + region + version.
-    Changing _CACHE_VERSION forces all cached order results to rebuild."""
-    return load_order_file(file_bytes, marketplace, region)
+# Order files are NOT cached — they are small, uploaded fresh daily,
+# and auto-detect logic (e.g. Shopee PH vs MY) must always run on the raw file.
 
 
 def _build_lookup_direct(df: pd.DataFrame, art_col: str, rrp_col: str,
@@ -77,6 +70,11 @@ st.set_page_config(
     layout="wide",
     initial_sidebar_state="expanded",
 )
+
+# Clear any stale cache entries on first load of a new deploy
+if "app_initialised" not in st.session_state:
+    st.cache_data.clear()
+    st.session_state["app_initialised"] = True
 
 st.markdown("""
 <style>
@@ -382,8 +380,7 @@ for tab, region in zip(region_tabs, active_regions):
                 if ups:
                     for uf in ups:
                         uf_bytes = uf.read()
-                        uf_hash  = _file_hash(uf_bytes)
-                        df_ord, err = _cached_order_file(uf_hash, mp, region, uf_bytes, _CACHE_VERSION)
+                        df_ord, err = load_order_file(uf_bytes, mp, region)
                         if err:
                             st.error(f"❌ {uf.name}: {err}")
                         else:
