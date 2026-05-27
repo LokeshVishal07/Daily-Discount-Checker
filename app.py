@@ -501,8 +501,10 @@ def _build_excl_table(df):
         remark   = str(keys[0]) if len(keys)>0 else ""
         rule     = str(keys[1]) if len(keys)>1 else ""
         severity = str(keys[2]) if len(keys)>2 else "grey"
-        sum_rrp  = grp["rrp_used"].sum(min_count=1) or 0
-        sum_paid = grp["paid_price"].sum(min_count=1) or 0
+        _s_rrp   = grp["rrp_used"].sum()
+        _s_paid  = grp["paid_price"].sum()
+        sum_rrp  = 0 if pd.isna(_s_rrp)  else float(_s_rrp)
+        sum_paid = 0 if pd.isna(_s_paid) else float(_s_paid)
         orders   = len(grp)
         flagged  = int(grp["flagged"].sum())
         amber_n  = int((grp["flag_severity"]=="amber").sum()) if "flag_severity" in grp.columns else 0
