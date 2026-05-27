@@ -176,11 +176,16 @@ def apply_flags_with_open_pct(df: pd.DataFrame,
             def _open_pct_for_row(row):
                 return open_pct_map.get((row.get("region",""), row.get("marketplace","")), 0.0)
 
+            # Skip rows where paid_price=0 (cancelled/unpaid — no real transaction)
+            paid_open = df.loc[m_open, "paid_price"].fillna(0)
+            m_open = m_open & (paid_open > 0)
+
+            # Recompute open_pct_series with the updated (smaller) m_open mask
             open_pct_series = df[m_open].apply(_open_pct_for_row, axis=1)
 
             # VC discount % for OPEN = open_pct applied to SRP (or RRP if no SRP)
             # expressed as % of RRP for consistency with other rules
-            srp_for_open = df.loc[m_open, "srp_used"].fillna(df.loc[m_open, "rrp_used"])
+            srp_for_open  = df.loc[m_open, "srp_used"].fillna(df.loc[m_open, "rrp_used"])
             safe_rrp_open = df.loc[m_open, "rrp_used"].replace(0, np.nan)
             vc_amount_open = srp_for_open * open_pct_series.values / 100
             vc_pct_of_rrp  = (vc_amount_open / safe_rrp_open * 100).round(2)
@@ -210,8 +215,9 @@ def apply_flags_with_open_pct(df: pd.DataFrame,
     reason   = pd.Series("",     index=df.index)
 
     # ── EXCLUDE ───────────────────────────────────────────────────────────────
-    m_excl = rt == "exclude"
-    below_srp = paid < (srp_floor - 0.5)
+    m_excl    = rt == "exclude"
+    paid_valid = paid > 0   # ignore cancelled/unpaid orders (paid=0)
+    below_srp  = paid_valid & (paid < (srp_floor - 0.5))
     flagged  = flagged  | (m_excl & below_srp)
     severity = severity.where(~m_excl, np.where(m_excl & below_srp, "red", "green"))
     reason   = reason.where(~m_excl,
@@ -241,6 +247,11 @@ def apply_flags_with_open_pct(df: pd.DataFrame,
                 severity.iloc[idx] = "grey"
                 reason.iloc[idx]   = "OPEN — missing RRP."
                 continue
+            if pd.isna(paid_val) or paid_val == 0:
+                # Cancelled / unpaid order — no real transaction, do not flag
+                severity.iloc[idx] = "grey"
+                reason.iloc[idx]   = "OPEN — cancelled or unpaid order, skipped."
+                continue
             actual_pct  = (safe_rrp_val - paid_val) / safe_rrp_val * 100
             os          = actual_pct - opct
             if os > OVERSHOOT_CHECK:
@@ -258,7 +269,8 @@ def apply_flags_with_open_pct(df: pd.DataFrame,
         reason   = reason.where(~m_open, "OPEN — enter max % in sidebar.")
 
     # ── MAX / EXACT_VC: use overshoot ────────────────────────────────────────
-    m_rule = rt.isin(["max_pct", "exact_vc"])
+    # Only flag when paid_price > 0 (skip cancelled/unpaid orders)
+    m_rule = rt.isin(["max_pct", "exact_vc"]) & (paid > 0)
     m_red  = m_rule & (overshoot > OVERSHOOT_CHECK)
     m_amb  = m_rule & (overshoot > OVERSHOOT_OK) & ~m_red
     m_ok   = m_rule & (overshoot <= OVERSHOOT_OK)
