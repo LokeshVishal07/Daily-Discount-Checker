@@ -72,11 +72,11 @@ st.set_page_config(
 )
 
 # Clear any stale cache entries on first load of a new deploy
-# Version bump forces cache clear on redeploy — change this string when deploying fixes
-_APP_VERSION = "v4-shopee-fixes"
-if st.session_state.get("_app_version") != _APP_VERSION:
+# Always clear Streamlit's cache on fresh session start
+# This prevents stale cached order/content data from a previous code version
+if "session_started" not in st.session_state:
     st.cache_data.clear()
-    st.session_state["_app_version"] = _APP_VERSION
+    st.session_state["session_started"] = True
 
 st.markdown("""
 <style>
@@ -393,6 +393,8 @@ for tab, region in zip(region_tabs, active_regions):
 
 if collected:
     st.session_state["orders_df"] = pd.concat(collected, ignore_index=True)
+    # Reset result so user sees fresh run results, not stale previous run
+    st.session_state["result_df"] = pd.DataFrame()
 
 # ─────────────────────────────────────────────────────────────────────────────
 # RUN CALCULATION
