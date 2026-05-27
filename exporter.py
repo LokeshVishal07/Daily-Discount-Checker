@@ -30,33 +30,39 @@ DETAIL_COLS = [
     "seller_vc_disc_pct",            # Col 11: SELLER Voucher Discount % from Remark
     "seller_end_disc_pct",           # Col 12: SELLER END DISCOUNT %
     "paid_price",                    # Col 13: Customer PAID Price
-    "actual_total_disc_pct",         # Col 14: Disc % from Paid to RRP
+    "actual_total_disc_pct",         # Col 14: Customer Disc % from RRP
+    "platform_discount_amount",      # Col 15: Platform Discount Amount
+    "effective_price",               # Col 16: Effective Price (Paid + Platform Disc)
+    "effective_disc_pct",            # Col 17: Effective Disc % from RRP ← used for flagging
     "remark", "rule_label", "rule_type",
     "flagged", "flag_reason", "flag_severity",
 ]
 
 # Exact display names matching the format file
 COL_LABELS = {
-    "region":               "Region",
-    "marketplace":          "Marketplace",
-    "order_id":             "Order Id",
-    "sku":                  "Sku",
-    "Article Number":       "Article Number",
-    "product_name":         "Product Name",
-    "order_status":         "Order Status",
-    "rrp_used":             "Rrp Used",
-    "srp_used":             "Srp Used",
-    "seller_srp_disc_pct":  "Seller SRP Discount %",
-    "seller_vc_disc_pct":   "SELLER Voucher Discount % Mentioned in Exclusion Remark",
-    "seller_end_disc_pct":  "SELLER END DISCOUNT %",
-    "paid_price":           "Customer PAID Price",
-    "actual_total_disc_pct":"Calculate Discount % from Customer PAID PRICE From RRP",
-    "remark":               "Remark",
-    "rule_label":           "Rule Label",
-    "rule_type":            "Rule Type",
-    "flagged":              "Flagged",
-    "flag_reason":          "Flag Reason",
-    "flag_severity":        "Flag Severity",
+    "region":                   "Region",
+    "marketplace":              "Marketplace",
+    "order_id":                 "Order Id",
+    "sku":                      "Sku",
+    "Article Number":           "Article Number",
+    "product_name":             "Product Name",
+    "order_status":             "Order Status",
+    "rrp_used":                 "Rrp Used",
+    "srp_used":                 "Srp Used",
+    "seller_srp_disc_pct":      "Seller SRP Discount %",
+    "seller_vc_disc_pct":       "SELLER Voucher Discount % Mentioned in Exclusion Remark",
+    "seller_end_disc_pct":      "SELLER END DISCOUNT %",
+    "paid_price":               "Customer PAID Price",
+    "actual_total_disc_pct":    "Customer Disc % From RRP",
+    "platform_discount_amount": "Platform Discount Amount",
+    "effective_price":          "Effective Price (Paid + Platform Disc)",
+    "effective_disc_pct":       "Effective Disc % From RRP",
+    "remark":                   "Remark",
+    "rule_label":               "Rule Label",
+    "rule_type":                "Rule Type",
+    "flagged":                  "Flagged",
+    "flag_reason":              "Flag Reason",
+    "flag_severity":            "Flag Severity",
 }
 
 
