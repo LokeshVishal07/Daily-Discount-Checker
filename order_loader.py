@@ -21,29 +21,12 @@ def load_order_file(file_bytes: bytes, marketplace: str, region: str):
         if raw is None or raw.empty:
             return None, "File is empty."
 
-        # Auto-detect Shopee PH format by checking PH-specific column names
-        # PH has "(PHP)" suffix on discount columns — MY/SG do not
-        if marketplace == "Shopee":
-            ph_indicators = [
-                "Products' Price Paid by Buyer (PHP)",
-                "Price Discount(from Seller)(PHP)",
-                "Shopee Rebate(PHP)",
-                "Seller Voucher(PHP)",
-            ]
-            is_ph = any(col in raw.columns for col in ph_indicators)
-            if is_ph:
-                cfg = MARKETPLACE_COLUMNS.get("Shopee_PH", cfg)
+        # Shopee PH uses different column names — switch config based on REGION
+        # This is 100% reliable vs string matching which can fail on encoding
+        if marketplace == "Shopee" and region == "PH":
+            cfg = MARKETPLACE_COLUMNS.get("Shopee_PH", cfg)
 
-        normalised = _normalise(raw, marketplace, region, cfg)
-        
-        # Safety check: if paid_price is all null/zero for Shopee and PH region,
-        # it means auto-detect failed — force Shopee_PH config and retry
-        if (marketplace == "Shopee" and region == "PH" and
-                normalised["paid_price"].isna().all()):
-            cfg_ph = MARKETPLACE_COLUMNS.get("Shopee_PH", cfg)
-            normalised = _normalise(raw, marketplace, region, cfg_ph)
-        
-        return normalised, ""
+        return _normalise(raw, marketplace, region, cfg), ""
     except Exception as exc:
         logger.exception("Order load error %s", marketplace)
         return None, str(exc)
