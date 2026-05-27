@@ -586,22 +586,35 @@ with tab_flag:
             "region","marketplace","order_id","sku","Article Number","product_name",
             "order_status","rrp_used","srp_used",
             "seller_srp_disc_pct","seller_vc_disc_pct","seller_end_disc_pct",
-            "paid_price","actual_total_disc_pct",
+            "paid_price","platform_discount_amount","effective_price",
+            "actual_total_disc_pct","effective_disc_pct","overshoot_pct",
             "remark","rule_label","flag_reason","flag_severity",
         ] if c in flagged_view.columns]
         disp_flag = flagged_view[flag_cols].rename(columns={
-            "seller_srp_disc_pct":  "Seller SRP Disc %",
-            "seller_vc_disc_pct":   "Seller VC Disc % (Remark)",
-            "seller_end_disc_pct":  "Seller END Disc %",
-            "actual_total_disc_pct":"Cust Disc % from RRP",
-            "rule_label":           "Rule",
+            "seller_srp_disc_pct":      "Seller SRP Disc %",
+            "seller_vc_disc_pct":       "Seller VC Disc % (Remark)",
+            "seller_end_disc_pct":      "Seller END Disc %",
+            "paid_price":               "Cust Paid Price",
+            "platform_discount_amount": "Platform Disc Amt",
+            "effective_price":          "Effective Price",
+            "actual_total_disc_pct":    "Cust Disc % (RRP)",
+            "effective_disc_pct":       "Effective Disc % (RRP)",
+            "overshoot_pct":            "Overshoot %",
+            "rule_label":               "Rule",
         }).copy()
-        for col, fmt in [("Seller SRP Disc %","{:.1f}%"),
-                          ("Seller VC Disc % (Remark)","{:.1f}%"),
-                          ("Seller END Disc %","{:.1f}%"),
-                          ("Cust Disc % from RRP","{:.1f}%"),
-                          ("rrp_used","{:.2f}"),("srp_used","{:.2f}"),
-                          ("paid_price","{:.2f}")]:
+        for col, fmt in [
+            ("Seller SRP Disc %",       "{:.1f}%"),
+            ("Seller VC Disc % (Remark)","{:.1f}%"),
+            ("Seller END Disc %",       "{:.1f}%"),
+            ("Cust Disc % (RRP)",       "{:.1f}%"),
+            ("Effective Disc % (RRP)",  "{:.1f}%"),
+            ("Overshoot %",             "{:.1f}%"),
+            ("rrp_used",                "{:.2f}"),
+            ("srp_used",                "{:.2f}"),
+            ("Cust Paid Price",         "{:.2f}"),
+            ("Platform Disc Amt",       "{:.2f}"),
+            ("Effective Price",         "{:.2f}"),
+        ]:
             if col in disp_flag.columns:
                 disp_flag[col] = disp_flag[col].apply(
                     lambda v: fmt.format(v) if v is not None and str(v) not in ("nan","") else "—"
@@ -641,15 +654,21 @@ with tab_all:
         "region","marketplace","order_id","sku","Article Number","product_name",
         "order_status","rrp_used","srp_used",
         "seller_srp_disc_pct","seller_vc_disc_pct","seller_end_disc_pct",
-        "paid_price","actual_total_disc_pct",
+        "paid_price","platform_discount_amount","effective_price",
+        "actual_total_disc_pct","effective_disc_pct","overshoot_pct",
         "remark","rule_label","flagged","flag_severity","flag_reason",
     ] if c in disp.columns]
     st.dataframe(disp[show].rename(columns={
-        "seller_srp_disc_pct":  "Seller SRP Disc %",
-        "seller_vc_disc_pct":   "Seller VC Disc % (Remark)",
-        "seller_end_disc_pct":  "Seller END Disc %",
-        "actual_total_disc_pct":"Cust Disc % from RRP",
-        "rule_label":           "Rule",
+        "seller_srp_disc_pct":      "Seller SRP Disc %",
+        "seller_vc_disc_pct":       "Seller VC Disc % (Remark)",
+        "seller_end_disc_pct":      "Seller END Disc %",
+        "paid_price":               "Cust Paid Price",
+        "platform_discount_amount": "Platform Disc Amt",
+        "effective_price":          "Effective Price",
+        "actual_total_disc_pct":    "Cust Disc % (RRP)",
+        "effective_disc_pct":       "Effective Disc % (RRP)",
+        "overshoot_pct":            "Overshoot %",
+        "rule_label":               "Rule",
     }), hide_index=True)
 
 # ─────────────────────────────────────────────────────────────────────────────
