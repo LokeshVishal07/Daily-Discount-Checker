@@ -72,9 +72,11 @@ st.set_page_config(
 )
 
 # Clear any stale cache entries on first load of a new deploy
-if "app_initialised" not in st.session_state:
+# Version bump forces cache clear on redeploy — change this string when deploying fixes
+_APP_VERSION = "v4-shopee-fixes"
+if st.session_state.get("_app_version") != _APP_VERSION:
     st.cache_data.clear()
-    st.session_state["app_initialised"] = True
+    st.session_state["_app_version"] = _APP_VERSION
 
 st.markdown("""
 <style>
