@@ -91,6 +91,13 @@ def _calc_discounts(df: pd.DataFrame) -> pd.DataFrame:
     df["seller_disc_pct"]       = (s_disc / safe_rrp * 100).round(2)
     df["platform_disc_pct"]     = (p_disc / safe_rrp * 100).round(2)
 
+    # ── Effective Price = Paid Price + Platform Discount ──────────────────────
+    # This represents what the customer actually paid before Shopee/Lazada/TikTok
+    # subsidised part of the discount — i.e. the true selling price from seller's view
+    effective_price = (paid + p_disc).round(2)
+    df["effective_price"]        = effective_price
+    df["effective_disc_pct"]     = ((safe_rrp - effective_price) / safe_rrp * 100).round(2)
+
     # Parse remarks in one pass
     remarks = df.get("remark", pd.Series([""] * len(df), index=df.index))
     parsed  = remarks.apply(parse_remark)
@@ -125,7 +132,9 @@ def _calc_discounts(df: pd.DataFrame) -> pd.DataFrame:
     df["authorised_disc_pct"] = ((safe_rrp - auth_floor) / safe_rrp * 100).where(
         safe_rrp.notna() & (auth_floor > 0)
     ).round(2)
-    df["overshoot_pct"] = (df["actual_total_disc_pct"] - df["authorised_disc_pct"]).round(2)
+    # Overshoot uses EFFECTIVE disc % (paid + platform disc) vs authorised
+    # This is fairer — platform subsidies don't count as seller overshooting
+    df["overshoot_pct"] = (df["effective_disc_pct"] - df["authorised_disc_pct"]).round(2)
 
     # ── Three new seller discount breakdown columns ────────────────────────────
     # Col 10: Seller SRP Discount % = (RRP - SRP) / RRP * 100
@@ -201,8 +210,9 @@ def apply_flags_with_open_pct(df: pd.DataFrame,
             auth_disc_open   = ((safe_rrp_open - auth_floor_open) / safe_rrp_open * 100).round(2)
             df.loc[m_open, "authorised_floor"]    = auth_floor_open.values
             df.loc[m_open, "authorised_disc_pct"] = auth_disc_open.values
+            # Overshoot for OPEN uses effective_disc_pct (paid + platform disc)
             df.loc[m_open, "overshoot_pct"]       = (
-                df.loc[m_open, "actual_total_disc_pct"] - auth_disc_open
+                df.loc[m_open, "effective_disc_pct"] - auth_disc_open
             ).round(2).values
 
     rt        = df["rule_type"]
@@ -252,8 +262,10 @@ def apply_flags_with_open_pct(df: pd.DataFrame,
                 severity.iloc[idx] = "grey"
                 reason.iloc[idx]   = "OPEN — cancelled or unpaid order, skipped."
                 continue
-            actual_pct  = (safe_rrp_val - paid_val) / safe_rrp_val * 100
-            os          = actual_pct - opct
+            # Use effective price (paid + platform disc) for overshoot calculation
+            eff_paid_val = paid_val + (df.at[idx, "platform_discount_amount"] or 0)
+            actual_pct   = (safe_rrp_val - eff_paid_val) / safe_rrp_val * 100
+            os           = actual_pct - opct
             if os > OVERSHOOT_CHECK:
                 flagged.iloc[idx]  = True
                 severity.iloc[idx] = "red"
@@ -279,12 +291,14 @@ def apply_flags_with_open_pct(df: pd.DataFrame,
     severity = severity.where(~m_red, "red")
     severity = severity.where(~m_amb, "amber")
     severity = severity.where(~m_ok,  "green")
+    eff_str  = df["effective_disc_pct"].round(1).astype(str)
+    ovs_str  = overshoot.round(1).astype(str)
     reason   = reason.where(~m_red,
-        "Overshoot " + overshoot.astype(str) + "% > 10%. 🚨")
+        "Effective disc " + eff_str + "% · overshoot " + ovs_str + "% > 10%. 🚨")
     reason   = reason.where(~m_amb,
-        "Overshoot " + overshoot.astype(str) + "% (5–10% check). ⚠️")
+        "Effective disc " + eff_str + "% · overshoot " + ovs_str + "% (check). ⚠️")
     reason   = reason.where(~m_ok,
-        "Within tolerance. ✅")
+        "Effective disc " + eff_str + "% within tolerance. ✅")
 
     # ── UNKNOWN ───────────────────────────────────────────────────────────────
     m_unk = rt == "unknown"
@@ -317,7 +331,8 @@ def flagged_orders(df: pd.DataFrame) -> pd.DataFrame:
         "region","marketplace","order_id","sku","Article Number","product_name",
         "order_status","rrp_used","srp_used",
         "seller_srp_disc_pct","seller_vc_disc_pct","seller_end_disc_pct",
-        "paid_price","actual_total_disc_pct",
+        "paid_price","platform_discount_amount","effective_price",
+        "actual_total_disc_pct","effective_disc_pct","overshoot_pct",
         "remark","rule_label","rule_type","flagged","flag_reason","flag_severity",
     ] if c in df.columns]
     return df[df["flagged"] == True][keep].reset_index(drop=True)
