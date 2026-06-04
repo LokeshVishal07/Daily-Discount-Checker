@@ -166,13 +166,29 @@ with st.sidebar:
             zf_bytes = zf.read()
             zf_hash  = _file_hash(zf_bytes)
             sheets   = get_sheet_names(zf_bytes)
+
+            # Check if any active region sheet exists in this file
+            found_any = False
             for region in active_regions:
-                if region not in sheets:
+                # Try exact match first, then case-insensitive match
+                matched_sheet = None
+                if region in sheets:
+                    matched_sheet = region
+                else:
+                    # Case-insensitive fallback
+                    for s in sheets:
+                        if s.strip().upper() == region.upper():
+                            matched_sheet = s
+                            break
+
+                if matched_sheet is None:
                     continue
+
+                found_any = True
                 if st.session_state["zecom_hash"].get(region) != zf_hash:
                     with st.spinner(f"Loading ZeCom {region}…"):
                         df_tab, num_cols, txt_cols, all_cols, err = _cached_zecom_sheet(
-                            zf_hash, region, zf_bytes
+                            zf_hash, matched_sheet, zf_bytes
                         )
                     if err:
                         st.error(f"ZeCom {region}: {err}")
@@ -186,6 +202,15 @@ with st.sidebar:
                     st.success(f"✅ ZeCom {region} — {len(df_tab):,} rows")
                 else:
                     st.success(f"✅ ZeCom {region} (cached)")
+
+            # If no matching region sheet found — show helpful error
+            if not found_any:
+                st.error(
+                    f"❌ No matching sheet found in **{zf.name}**. "
+                    f"Sheets in file: **{', '.join(sheets)}**. "
+                    f"Expected a sheet named: **{', '.join(active_regions)}**. "
+                    f"Please rename the sheet to match your selected region."
+                )
 
     # ── Per-marketplace column mapping ──────────────────────────────────────────
     if st.session_state["zecom_data"]:
