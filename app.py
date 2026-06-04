@@ -170,16 +170,13 @@ with st.sidebar:
             # Check if any active region sheet exists in this file
             found_any = False
             for region in active_regions:
-                # Try exact match first, then case-insensitive match
+                # Match any sheet that contains the region name (case-insensitive)
+                # e.g. "PH 6.6", "PH - Final", "ph", "PH" all match region "PH"
                 matched_sheet = None
-                if region in sheets:
-                    matched_sheet = region
-                else:
-                    # Case-insensitive fallback
-                    for s in sheets:
-                        if s.strip().upper() == region.upper():
-                            matched_sheet = s
-                            break
+                for s in sheets:
+                    if region.upper() in s.strip().upper():
+                        matched_sheet = s
+                        break
 
                 if matched_sheet is None:
                     continue
