@@ -71,9 +71,22 @@ st.set_page_config(
     initial_sidebar_state="expanded",
 )
 
-# Clear any stale cache entries on first load of a new deploy
-# Always clear Streamlit's cache on fresh session start
-# This prevents stale cached order/content data from a previous code version
+# ── Session state — initialised FIRST before anything else accesses it ───────
+_defaults = {
+    "content_df":    None,
+    "zecom_data":    {},
+    "zecom_bytes":   {},
+    "zecom_hash":    {},
+    "mp_lookups":    {},
+    "orders_df":     pd.DataFrame(),
+    "result_df":     pd.DataFrame(),
+    "open_pct_map":  {},
+}
+for k, v in _defaults.items():
+    if k not in st.session_state:
+        st.session_state[k] = v
+
+# Clear stale cache on fresh session — runs AFTER session state is set up
 if "session_started" not in st.session_state:
     st.cache_data.clear()
     st.session_state["session_started"] = True
@@ -88,21 +101,6 @@ st.markdown("""
   div[data-testid="stExpander"]{border:1px solid #e0e0e0;border-radius:8px;}
 </style>
 """, unsafe_allow_html=True)
-
-# ── Session state ─────────────────────────────────────────────────────────────
-_defaults = {
-    "content_df":    None,
-    "zecom_data":    {},
-    "zecom_bytes":   {},          # {region: bytes} for lookup rebuild
-    "zecom_hash":    {},          # {region: hash}
-    "mp_lookups":    {},
-    "orders_df":     pd.DataFrame(),
-    "result_df":     pd.DataFrame(),
-    "open_pct_map":  {},
-}
-for k, v in _defaults.items():
-    if k not in st.session_state:
-        st.session_state[k] = v
 
 
 # ─────────────────────────────────────────────────────────────────────────────
